@@ -1,0 +1,5 @@
+[
+  { "id": "acme", "name": "Acme Corp", "tier": "Enterprise" },
+  { "id": "globex", "name": "Globex", "tier": "Growth" },
+  { "id": "initech", "name": "Initech", "tier": "Starter" }
+]
