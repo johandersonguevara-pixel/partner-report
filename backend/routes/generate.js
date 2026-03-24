@@ -65,7 +65,10 @@ generateRouter.post("/", async (req, res, next) => {
     });
 
     console.log(`📄 Generating PDF...`);
-    const pdfBuffer = await markdownToPdfBuffer(reportMarkdown);
+    const pdfBuffer = await markdownToPdfBuffer(reportMarkdown, {
+      partnerName: name,
+      period: periodLabel,
+    });
 
     // Guardar no histórico
     const id = uuidv4();
