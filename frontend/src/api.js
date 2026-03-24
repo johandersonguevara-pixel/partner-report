@@ -1,5 +1,11 @@
 const base = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
 
+if (import.meta.env.PROD && !base) {
+  console.warn(
+    "[partner-report] Defina VITE_API_URL no build (URL do backend). Sem isso, /api vai para este host e falha se a API for outro serviço."
+  );
+}
+
 export function apiPath(path) {
   const p = path.startsWith("/") ? path : `/${path}`;
   return `${base}${p}`;
