@@ -5,6 +5,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
+    allowedHosts: ["balanced-intuition-front-production.up.railway.app"],
     proxy: {
       "/api": {
         target: "http://localhost:3001",
