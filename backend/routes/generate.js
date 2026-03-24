@@ -15,65 +15,82 @@ export const generateRouter = express.Router();
 
 generateRouter.post("/", async (req, res, next) => {
   try {
-    const { partnerId, period, start, end, includePdf } = req.body || {};
-    if (!partnerId || typeof partnerId !== "string") {
-      res.status(400).json({ error: "partnerId is required" });
-      return;
+    // Aceita tanto o formato do Cursor como o nosso
+    const partnerId   = req.body.partnerId   || req.body.partner_id;
+    const period      = req.body.period      || req.body.quarter;
+    const partnerName = req.body.partnerName || req.body.partner_name;
+    const region      = req.body.region      || "";
+    const generatedBy = req.body.generatedBy || req.body.generated_by || "";
+    const start       = req.body.start;
+    const end         = req.body.end;
+
+    if (!partnerId) {
+      return res.status(400).json({ error: "partnerId is required" });
     }
 
-    const raw = await readFile(partnersPath, "utf8");
-    const partners = JSON.parse(raw);
-    const partner = partners.find((p) => p.id === partnerId);
+    // Tenta carregar partners do ficheiro, senão usa lista hardcoded
+    let partner;
+    try {
+      const raw = await readFile(partnersPath, "utf8");
+      const partners = JSON.parse(raw);
+      partner = partners.find((p) => p.id === partnerId);
+    } catch {
+      const PARTNERS = [
+        { id: "mercadopago-br",   name: "Mercado Pago",     region: "Brasil" },
+        { id: "getnet-br",        name: "Getnet",           region: "Brasil" },
+        { id: "cielo-br",         name: "Cielo",            region: "Brasil" },
+        { id: "clearsale-br",     name: "ClearSale",        region: "Brasil" },
+        { id: "paypal-braintree", name: "PayPal-Braintree", region: "Global" },
+        { id: "picpay-br",        name: "PicPay",           region: "Brasil" },
+      ];
+      partner = PARTNERS.find((p) => p.id === partnerId);
+    }
+
     if (!partner) {
-      res.status(404).json({ error: "Unknown partner" });
-      return;
+      return res.status(404).json({ error: "Unknown partner" });
     }
 
-    const periodLabel =
-      typeof period === "string" && period.trim()
-        ? period.trim()
-        : "Current period";
+    const periodLabel = period || "Current period";
+    const name        = partnerName || partner.name;
 
+    console.log(`📊 Fetching metrics: ${name} | ${periodLabel}`);
     const metricsBundle = await fetchPartnerMetrics(partnerId, { start, end });
+
+    console.log(`🧠 Generating report with Claude...`);
     const reportMarkdown = await generateReportMarkdown({
       partnerId,
-      partnerName: partner.name,
+      partnerName: name,
       period: periodLabel,
       metrics: metricsBundle,
     });
 
-    let pdfBase64;
-    if (includePdf) {
-      const buf = await markdownToPdfBuffer(reportMarkdown);
-      pdfBase64 = buf.toString("base64");
-    }
+    console.log(`📄 Generating PDF...`);
+    const pdfBuffer = await markdownToPdfBuffer(reportMarkdown);
 
+    // Guardar no histórico
     const id = uuidv4();
-    const createdAt = new Date().toISOString();
     const entry = {
       id,
       partnerId,
-      partnerName: partner.name,
+      partnerName: name,
+      partner: name,
+      region: region || partner.region || "",
       period: periodLabel,
-      createdAt,
-      metricsSource: metricsBundle.source,
-      reportMarkdown,
-      ...(pdfBase64 ? { pdfBase64 } : {}),
+      quarter: periodLabel,
+      generated_by: generatedBy,
+      filename: `Yuno_PartnerReport_${name.replace(/\s/g, "_")}_${periodLabel.replace(/\s/g, "_")}.pdf`,
+      generated_at: new Date().toLocaleString("pt-BR"),
+      createdAt: new Date().toISOString(),
     };
 
     await appendHistory(entry);
 
-    res.status(201).json({
-      id,
-      partnerId,
-      partnerName: partner.name,
-      period: periodLabel,
-      createdAt,
-      metricsSource: metricsBundle.source,
-      reportMarkdown,
-      ...(pdfBase64 ? { pdfBase64 } : {}),
-    });
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${entry.filename}"`);
+    res.send(pdfBuffer);
+
   } catch (e) {
+    console.error("Generate error:", e);
     next(e);
   }
 });

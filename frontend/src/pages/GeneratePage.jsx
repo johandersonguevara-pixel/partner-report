@@ -175,41 +175,71 @@ export default function GeneratePage({ user, onGenerated }) {
         }),
       })
       clearInterval(interval)
-      const text = await res.text()
-      let data
-      try {
-        data = text ? JSON.parse(text) : null
-      } catch {
-        if (!res.ok) {
-          throw new Error(
-            text?.trim()?.slice(0, 180) || `Falha na API (${res.status}). Confirme VITE_API_URL e se o backend está no ar.`
-          )
-        }
-        throw new Error('Resposta inválida do servidor')
-      }
-      if (!res.ok) {
-        throw new Error(
-          data?.error || `Erro ao gerar documento (${res.status}). Ver consola do backend.`
-        )
-      }
+      const ct = (res.headers.get('content-type') || '').toLowerCase()
 
       let blob
       let filename = `Yuno_PartnerReport_${sel.name.replace(/\s/g, '_')}_${quarter.replace(/\s/g, '_')}.pdf`
-      if (data.pdfBase64) {
-        const bin = atob(data.pdfBase64)
-        const bytes = new Uint8Array(bin.length)
-        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
-        blob = new Blob([bytes], { type: 'application/pdf' })
+      let entryId = Date.now()
+      let partnerLabel = sel.name
+      let quarterLabel = quarter
+
+      if (ct.includes('application/pdf')) {
+        if (!res.ok) {
+          const errText = await res.text()
+          throw new Error(
+            errText?.trim()?.slice(0, 180) ||
+              `Falha na API (${res.status}). Confirme VITE_API_URL e o backend.`
+          )
+        }
+        blob = await res.blob()
+        const dispo = res.headers.get('content-disposition') || ''
+        const m = /filename\*?=(?:UTF-8''|")?([^";\n]+)/i.exec(dispo)
+        if (m) {
+          try {
+            filename = decodeURIComponent(m[1].replace(/"/g, '').trim())
+          } catch {
+            filename = m[1].replace(/"/g, '').trim()
+          }
+        }
       } else {
-        blob = new Blob([data.reportMarkdown || ''], { type: 'text/markdown;charset=utf-8' })
-        filename = filename.replace(/\.pdf$/i, '.md')
+        const text = await res.text()
+        let data
+        try {
+          data = text ? JSON.parse(text) : null
+        } catch {
+          if (!res.ok) {
+            throw new Error(
+              text?.trim()?.slice(0, 180) ||
+                `Falha na API (${res.status}). Confirme VITE_API_URL e se o backend está no ar.`
+            )
+          }
+          throw new Error('Resposta inválida do servidor')
+        }
+        if (!res.ok) {
+          throw new Error(
+            data?.error || `Erro ao gerar documento (${res.status}). Ver consola do backend.`
+          )
+        }
+        entryId = data.id || entryId
+        partnerLabel = data.partnerName || sel.name
+        quarterLabel = data.period || quarter
+        if (data.pdfBase64) {
+          const bin = atob(data.pdfBase64)
+          const bytes = new Uint8Array(bin.length)
+          for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+          blob = new Blob([bytes], { type: 'application/pdf' })
+        } else {
+          blob = new Blob([data.reportMarkdown || ''], { type: 'text/markdown;charset=utf-8' })
+          filename = filename.replace(/\.pdf$/i, '.md')
+        }
       }
+
       const url = URL.createObjectURL(blob)
       const entry = {
-        id: data.id || Date.now(),
-        partner: data.partnerName || sel.name,
+        id: entryId,
+        partner: partnerLabel,
         region: sel.region,
-        quarter: data.period || quarter,
+        quarter: quarterLabel,
         generated_by: user.name,
         generated_at: new Date().toLocaleString('pt-BR'),
         url,
