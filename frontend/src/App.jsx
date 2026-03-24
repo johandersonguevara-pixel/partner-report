@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import GeneratePage from './pages/GeneratePage'
 import HistoryPage from './pages/HistoryPage'
 import Header from './components/Header'
+import { fetchJson } from './api.js'
 
 const CURRENT_USER = {
   name: 'Johanderson Guevara',
@@ -14,10 +15,31 @@ export default function App() {
   const [history, setHistory] = useState([])
 
   useEffect(() => {
-    fetch(`${import.meta.env.VITE_API_URL}/api/history`)
-      .then(r => r.json())
-      .then(data => setHistory(data.history || []))
-      .catch(() => {})
+    let cancelled = false
+    ;(async () => {
+      try {
+        const rows = await fetchJson('/api/history')
+        const list = Array.isArray(rows) ? rows : []
+        const mapped = list.map((h) => ({
+          id: h.id,
+          partner: h.partnerName ?? h.partner ?? '—',
+          quarter: h.period ?? h.quarter ?? '—',
+          region: h.region ?? '—',
+          generated_by: h.generated_by ?? '—',
+          generated_at:
+            h.generated_at ??
+            (h.createdAt ? new Date(h.createdAt).toLocaleString('pt-BR') : '—'),
+          url: null,
+          filename: null,
+        }))
+        if (!cancelled) setHistory(mapped)
+      } catch {
+        if (!cancelled) setHistory([])
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   function addToHistory(entry) {

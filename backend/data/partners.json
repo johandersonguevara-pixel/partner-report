@@ -1,5 +1,8 @@
 [
-  { "id": "acme", "name": "Acme Corp", "tier": "Enterprise" },
-  { "id": "globex", "name": "Globex", "tier": "Growth" },
-  { "id": "initech", "name": "Initech", "tier": "Starter" }
+  { "id": "acme", "name": "Acme Corp", "tier": "Enterprise", "region": "Brasil" },
+  { "id": "globex", "name": "Globex", "tier": "Growth", "region": "América Latina" },
+  { "id": "initech", "name": "Initech", "tier": "Starter", "region": "Brasil" },
+  { "id": "mercadopago-br", "name": "Mercado Pago", "tier": "Strategic", "region": "Brasil" },
+  { "id": "getnet-br", "name": "Getnet", "tier": "Tier 1", "region": "Brasil" },
+  { "id": "cielo-br", "name": "Cielo", "tier": "Tier 1", "region": "Brasil" }
 ]

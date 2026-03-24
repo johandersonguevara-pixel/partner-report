@@ -1,4 +1,23 @@
 import { useState, useEffect, useRef } from 'react'
+import { fetchJson, apiPath } from '../api.js'
+
+const FALLBACK_PARTNERS = [
+  { id: 'mercadopago-br', name: 'Mercado Pago', region: 'Brasil', tier: 'Strategic' },
+  { id: 'getnet-br', name: 'Getnet', region: 'Brasil', tier: 'Tier 1' },
+  { id: 'cielo-br', name: 'Cielo', region: 'Brasil', tier: 'Tier 1' },
+  { id: 'clearsale-br', name: 'ClearSale', region: 'Brasil', tier: 'Tier 2' },
+  { id: 'paypal-braintree', name: 'PayPal-Braintree', region: 'Global', tier: 'Strategic' },
+  { id: 'picpay-br', name: 'PicPay', region: 'Brasil', tier: 'Tier 1' },
+]
+
+function normalizePartner(p) {
+  return {
+    id: p.id,
+    name: p.name ?? '—',
+    region: p.region ?? p.regiao ?? '—',
+    tier: p.tier ?? 'Tier 2',
+  }
+}
 
 const B = {
   blue: '#3E4FE0', blueDark: '#1726A6', blueLight: '#788CFF',
@@ -41,12 +60,16 @@ function PartnerAutocomplete({ value, onChange, disabled, partners }) {
   const inputRef          = useRef(null)
 
   const selected = partners.find(p => p.id === value)
-  const filtered = query.trim() === ''
-    ? partners
-    : partners.filter(p =>
-        p.name.toLowerCase().includes(query.toLowerCase()) ||
-        p.region.toLowerCase().includes(query.toLowerCase())
-      )
+  const q = query.trim().toLowerCase()
+  const filtered =
+    q === ''
+      ? partners
+      : partners.filter((p) => {
+          const name = (p.name || '').toLowerCase()
+          const region = (p.region || '').toLowerCase()
+          const tier = (p.tier || '').toLowerCase()
+          return name.includes(q) || region.includes(q) || tier.includes(q)
+        })
 
   const displayValue = open ? query : (selected ? selected.name : '')
 
@@ -64,8 +87,8 @@ function PartnerAutocomplete({ value, onChange, disabled, partners }) {
           onFocus={() => { setOpen(true); setQuery('') }}
           onBlur={() => setTimeout(() => { setOpen(false); setQuery('') }, 150)}
           onKeyDown={e => {
-            if (e.key==='ArrowDown') { e.preventDefault(); setHi(h=>Math.min(h+1,filtered.length-1)) }
-            if (e.key==='ArrowUp')   { e.preventDefault(); setHi(h=>Math.max(h-1,0)) }
+            if (e.key==='ArrowDown') { e.preventDefault(); if (filtered.length) setHi(h => Math.min(h + 1, filtered.length - 1)) }
+            if (e.key==='ArrowUp')   { e.preventDefault(); if (filtered.length) setHi(h => Math.max(h - 1, 0)) }
             if (e.key==='Enter' && filtered[hi]) handleSelect(filtered[hi])
             if (e.key==='Escape')    { setOpen(false); setQuery('') }
           }}
@@ -114,17 +137,20 @@ export default function GeneratePage({ user, onGenerated }) {
   const [error, setError]       = useState('')
 
   useEffect(() => {
-    fetch(`${import.meta.env.VITE_API_URL}/api/partners`)
-      .then(r => r.json())
-      .then(d => setPartners(d.partners || []))
-      .catch(() => setPartners([
-        { id:'mercadopago-br',   name:'Mercado Pago',     region:'Brasil', tier:'Strategic' },
-        { id:'getnet-br',        name:'Getnet',           region:'Brasil', tier:'Tier 1'    },
-        { id:'cielo-br',         name:'Cielo',            region:'Brasil', tier:'Tier 1'    },
-        { id:'clearsale-br',     name:'ClearSale',        region:'Brasil', tier:'Tier 2'    },
-        { id:'paypal-braintree', name:'PayPal-Braintree', region:'Global', tier:'Strategic' },
-        { id:'picpay-br',        name:'PicPay',           region:'Brasil', tier:'Tier 1'    },
-      ]))
+    let cancelled = false
+    ;(async () => {
+      try {
+        const d = await fetchJson('/api/partners')
+        const raw = Array.isArray(d) ? d : (d?.partners ?? [])
+        const list = raw.map(normalizePartner).filter((p) => p.id)
+        if (!cancelled) setPartners(list.length ? list : FALLBACK_PARTNERS.map(normalizePartner))
+      } catch {
+        if (!cancelled) setPartners(FALLBACK_PARTNERS.map(normalizePartner))
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   const sel = partners.find(p => p.id === partner)
@@ -139,21 +165,54 @@ export default function GeneratePage({ user, onGenerated }) {
     }, 1800)
 
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/generate`, {
+      const res = await fetch(apiPath('/api/generate'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ partner_id: sel.id, partner_name: sel.name, region: sel.region, quarter, generated_by: user.name }),
+        body: JSON.stringify({
+          partnerId: sel.id,
+          period: quarter,
+          includePdf: true,
+        }),
       })
       clearInterval(interval)
-      if (!res.ok) throw new Error('Erro ao gerar documento')
+      const text = await res.text()
+      let data
+      try {
+        data = text ? JSON.parse(text) : null
+      } catch {
+        throw new Error('Resposta inválida do servidor')
+      }
+      if (!res.ok) throw new Error(data?.error || 'Erro ao gerar documento')
 
-      const blob = await res.blob()
-      const url  = URL.createObjectURL(blob)
-      const filename = `Yuno_PartnerReport_${sel.name.replace(/\s/g,'_')}_${quarter.replace(/\s/g,'_')}.pdf`
-      const entry = { id: Date.now(), partner: sel.name, region: sel.region, quarter, generated_by: user.name, generated_at: new Date().toLocaleString('pt-BR'), url, filename }
+      let blob
+      let filename = `Yuno_PartnerReport_${sel.name.replace(/\s/g, '_')}_${quarter.replace(/\s/g, '_')}.pdf`
+      if (data.pdfBase64) {
+        const bin = atob(data.pdfBase64)
+        const bytes = new Uint8Array(bin.length)
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+        blob = new Blob([bytes], { type: 'application/pdf' })
+      } else {
+        blob = new Blob([data.reportMarkdown || ''], { type: 'text/markdown;charset=utf-8' })
+        filename = filename.replace(/\.pdf$/i, '.md')
+      }
+      const url = URL.createObjectURL(blob)
+      const entry = {
+        id: data.id || Date.now(),
+        partner: data.partnerName || sel.name,
+        region: sel.region,
+        quarter: data.period || quarter,
+        generated_by: user.name,
+        generated_at: new Date().toLocaleString('pt-BR'),
+        url,
+        filename,
+      }
 
       setStep(STEPS.length - 1)
-      setTimeout(() => { setResult(entry); setStatus('done'); onGenerated(entry) }, 600)
+      setTimeout(() => {
+        setResult(entry)
+        setStatus('done')
+        onGenerated(entry)
+      }, 600)
     } catch (err) {
       clearInterval(interval)
       setError(err.message || 'Erro inesperado')
@@ -183,7 +242,18 @@ export default function GeneratePage({ user, onGenerated }) {
           </div>
           <div style={{ padding:20, overflow:'visible' }}>
             <label style={labelStyle}>Parceiro</label>
-            <PartnerAutocomplete value={partner} onChange={v => { setPartner(v); reset(); setPartner(v) }} disabled={status==='loading'} partners={partners} />
+            <PartnerAutocomplete
+              value={partner}
+              onChange={(v) => {
+                setPartner(v)
+                setStatus('idle')
+                setStep(-1)
+                setResult(null)
+                setError('')
+              }}
+              disabled={status === 'loading'}
+              partners={partners}
+            />
             {sel && <div style={{ display:'flex', gap:6, marginBottom:14 }}><TierBadge tier={sel.tier}/><span style={{ fontSize:11, color:B.gray, padding:'3px 8px', background:'#F5F6FA', borderRadius:6 }}>{sel.region}</span></div>}
 
             <label style={labelStyle}>Quarter</label>
