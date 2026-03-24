@@ -4,5 +4,8 @@
   { "id": "initech", "name": "Initech", "tier": "Starter", "region": "Brasil" },
   { "id": "mercadopago-br", "name": "Mercado Pago", "tier": "Strategic", "region": "Brasil" },
   { "id": "getnet-br", "name": "Getnet", "tier": "Tier 1", "region": "Brasil" },
-  { "id": "cielo-br", "name": "Cielo", "tier": "Tier 1", "region": "Brasil" }
+  { "id": "cielo-br", "name": "Cielo", "tier": "Tier 1", "region": "Brasil" },
+  { "id": "clearsale-br", "name": "ClearSale", "tier": "Tier 2", "region": "Brasil" },
+  { "id": "paypal-braintree", "name": "PayPal-Braintree", "tier": "Strategic", "region": "Global" },
+  { "id": "picpay-br", "name": "PicPay", "tier": "Tier 1", "region": "Brasil" }
 ]

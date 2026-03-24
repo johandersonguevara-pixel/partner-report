@@ -180,9 +180,18 @@ export default function GeneratePage({ user, onGenerated }) {
       try {
         data = text ? JSON.parse(text) : null
       } catch {
+        if (!res.ok) {
+          throw new Error(
+            text?.trim()?.slice(0, 180) || `Falha na API (${res.status}). Confirme VITE_API_URL e se o backend está no ar.`
+          )
+        }
         throw new Error('Resposta inválida do servidor')
       }
-      if (!res.ok) throw new Error(data?.error || 'Erro ao gerar documento')
+      if (!res.ok) {
+        throw new Error(
+          data?.error || `Erro ao gerar documento (${res.status}). Ver consola do backend.`
+        )
+      }
 
       let blob
       let filename = `Yuno_PartnerReport_${sel.name.replace(/\s/g, '_')}_${quarter.replace(/\s/g, '_')}.pdf`
