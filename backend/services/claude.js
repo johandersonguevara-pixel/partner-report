@@ -24,7 +24,7 @@ export async function generateReportMarkdown(input) {
   );
 
   const msg = await client.messages.create({
-    model: process.env.ANTHROPIC_MODEL || "claude-3-5-sonnet-20241022",
+    model: "claude-haiku-4-5-20251001",
     max_tokens: 2048,
     messages: [
       {
