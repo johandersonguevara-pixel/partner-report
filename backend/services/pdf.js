@@ -1,6 +1,35 @@
 import PDFDocument from "pdfkit";
 
 /**
+ * PDFKit + Helvetica usam encoding tipo WinAnsi. Texto UTF-8 “rico” (emoji, CJK)
+ * pode falhar em Linux (Railway). Mantemos ASCII + Latin-1 (incl. ç, ñ) e tiramos marcas combinadas.
+ */
+export function pdfSafeText(str) {
+  const stripped = String(str ?? "")
+    .normalize("NFKD")
+    .replace(/\p{M}/gu, "")
+    .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{26FF}]/gu, "");
+
+  let out = "";
+  for (const ch of stripped) {
+    const c = ch.codePointAt(0);
+    if (c === 0x09 || c === 0x0a || c === 0x0d) {
+      out += ch;
+      continue;
+    }
+    if (c >= 0x20 && c <= 0x7e) {
+      out += ch;
+      continue;
+    }
+    if (c >= 0xa0 && c <= 0xff) {
+      out += ch;
+      continue;
+    }
+  }
+  return out;
+}
+
+/**
  * @param {string} text
  * @returns {Promise<Buffer>}
  */
@@ -13,7 +42,7 @@ export function markdownToPdfBuffer(text) {
     doc.on("end", () => resolve(Buffer.concat(chunks)));
     doc.on("error", reject);
 
-    const lines = text.replace(/\r\n/g, "\n").split("\n");
+    const lines = pdfSafeText(text).replace(/\r\n/g, "\n").split("\n");
     for (const line of lines) {
       const trimmed = line.trim();
       if (trimmed.startsWith("# ")) {

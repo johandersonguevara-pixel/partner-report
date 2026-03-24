@@ -83,14 +83,18 @@ generateRouter.post("/", async (req, res, next) => {
       createdAt: new Date().toISOString(),
     };
 
-    await appendHistory(entry);
+    try {
+      await appendHistory(entry);
+    } catch (histErr) {
+      console.error("History write failed (PDF still sent):", histErr);
+    }
 
+    const safeName = entry.filename.replace(/[^\w.\-]+/g, "_");
     res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `attachment; filename="${entry.filename}"`);
+    res.setHeader("Content-Disposition", `attachment; filename="${safeName}"`);
     res.send(pdfBuffer);
-
   } catch (e) {
-    console.error("Generate error:", e);
+    console.error("Generate error:", e?.stack || e);
     next(e);
   }
 });
