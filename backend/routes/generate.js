@@ -129,6 +129,8 @@ generateRouter.post("/", conditionalUpload, async (req, res, next) => {
       metrics: metricsBundle,
     });
 
+    console.log("CLAUDE_JSON_RAW:", JSON.stringify(reportJSON, null, 2));
+
     const generatedAt = new Date().toISOString();
     const id = uuidv4();
     const entry = {

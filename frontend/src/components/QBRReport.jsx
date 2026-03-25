@@ -158,20 +158,57 @@ function declineTypeColor(t) {
   return "#E0A020";
 }
 
+/** Desembrulha { report } / { data } e normaliza shape comum da API. */
+function unwrapReportPayload(raw) {
+  if (!raw || typeof raw !== "object") return {};
+  if (raw.report && typeof raw.report === "object") return raw.report;
+  if (raw.data && typeof raw.data === "object") return raw.data;
+  return raw;
+}
+
+function normalizeKpis(raw) {
+  const k = raw && typeof raw === "object" ? raw : {};
+  return {
+    totalTPV: k.totalTPV ?? k.total_tpv ?? k.Total_TPV,
+    totalTransactions: k.totalTransactions ?? k.total_transactions,
+    approvalRate: k.approvalRate ?? k.approval_rate,
+    declinedVolume: k.declinedVolume ?? k.declined_volume,
+    tpvGrowth: k.tpvGrowth ?? k.tpv_growth,
+    topOpportunity: k.topOpportunity ?? k.top_opportunity,
+  };
+}
+
 export default function QBRReport({ report: rawReport, meta }) {
-  const report = rawReport && typeof rawReport === "object" ? rawReport : {};
-  const kpis = report?.kpis ?? {};
+  useEffect(() => {
+    try {
+      console.log("QBR REPORT PROP:", JSON.stringify(rawReport, null, 2));
+    } catch (e) {
+      console.log("QBR REPORT PROP:", rawReport, e);
+    }
+  }, [rawReport]);
+
+  const report = unwrapReportPayload(rawReport);
+  const kpisRaw = report?.kpis || {};
+  const kpis = normalizeKpis(kpisRaw);
+
   const partnerName =
     report?.partner ?? meta?.partnerName ?? "Partner";
   const period = report?.period ?? meta?.period ?? "—";
   const generatedAt =
-    report?.generatedAt ?? meta?.generatedAt ?? new Date().toISOString();
+    report?.generatedAt ??
+    report?.generated_at ??
+    meta?.generatedAt ??
+    new Date().toISOString();
   const genLabel = new Date(generatedAt).toLocaleString("pt-BR");
 
   const [activeTab, setActiveTab] = useState("overview");
   const [showExport, setShowExport] = useState(false);
   const [filterCat, setFilterCat] = useState("all");
-  const nextSteps = Array.isArray(report?.nextSteps) ? report.nextSteps : [];
+  const nextSteps = Array.isArray(report?.nextSteps)
+    ? report.nextSteps
+    : Array.isArray(report?.next_steps)
+      ? report.next_steps
+      : [];
 
   const [selectedSteps, setSelectedSteps] = useState(() => new Set());
 
@@ -179,25 +216,68 @@ export default function QBRReport({ report: rawReport, meta }) {
     setSelectedSteps(new Set(nextSteps.map((_, i) => String(i))));
   }, [nextSteps]);
 
-  const monthlyRaw = Array.isArray(report?.monthlyPerformance)
-    ? report.monthlyPerformance
-    : [];
-  const monthly = useMemo(
-    () =>
-      monthlyRaw.filter((r) =>
-        /^\d{4}-\d{2}$/.test(String(r?.month ?? "").trim())
-      ),
-    [monthlyRaw]
-  );
+  const monthlyRaw =
+    report?.monthlyPerformance ||
+    report?.monthly_performance ||
+    [];
+  const monthly = useMemo(() => {
+    const arr = Array.isArray(monthlyRaw) ? monthlyRaw : [];
+    const iso = arr.filter((r) =>
+      /^\d{4}-\d{2}$/.test(String(r?.month ?? "").trim())
+    );
+    if (iso.length > 0) return iso;
+    return arr.filter((r) => String(r?.month ?? "").trim().length > 0);
+  }, [monthlyRaw]);
 
-  const paymentMethods = Array.isArray(report?.paymentMethods)
-    ? report.paymentMethods
-    : [];
-  const highlights = report?.merchants?.highlights ?? [];
-  const alerts = report?.merchants?.alerts ?? [];
-  const declineCodes = Array.isArray(report?.declineCodes)
-    ? report.declineCodes
-    : [];
+  const paymentMethodsRaw =
+    report?.paymentMethods || report?.payment_methods || [];
+  const paymentMethods = useMemo(() => {
+    const arr = Array.isArray(paymentMethodsRaw) ? paymentMethodsRaw : [];
+    return arr.map((p) => ({
+      ...p,
+      method: p?.method ?? p?.name ?? p?.payment_method ?? "—",
+      approvalRate: p?.approvalRate ?? p?.approval_rate ?? p?.rate,
+      volume: p?.volume ?? p?.total_volume,
+      status: p?.status ?? p?.health,
+    }));
+  }, [paymentMethodsRaw]);
+
+  const merchantsBlock =
+    report?.merchants && typeof report.merchants === "object"
+      ? report.merchants
+      : null;
+  const highlights = Array.isArray(merchantsBlock?.highlights)
+    ? merchantsBlock.highlights
+    : Array.isArray(report?.merchant_highlights)
+      ? report.merchant_highlights
+      : [];
+  const alerts = Array.isArray(merchantsBlock?.alerts)
+    ? merchantsBlock.alerts
+    : Array.isArray(report?.merchant_alerts)
+      ? report.merchant_alerts
+      : [];
+
+  const declineCodesRaw = report?.declineCodes || report?.decline_codes || [];
+  const declineCodes = useMemo(() => {
+    const arr = Array.isArray(declineCodesRaw) ? declineCodesRaw : [];
+    return arr.map((d) => ({
+      ...d,
+      code: d?.code ?? d?.decline_code ?? d?.Code,
+      total: d?.total ?? d?.count,
+      pctOfDeclines:
+        Number(
+          d?.pctOfDeclines ?? d?.pct_of_declines ?? d?.pct ?? d?.percentage
+        ) || 0,
+      estimatedLostVolume:
+        d?.estimatedLostVolume ?? d?.estimated_lost_volume,
+      type: d?.type ?? d?.category,
+    }));
+  }, [declineCodesRaw]);
+
+  const trendAnalysisText =
+    report?.trendAnalysis ?? report?.trend_analysis ?? "";
+  const top3Opportunities =
+    report?.top3Opportunities ?? report?.top_3_opportunities ?? [];
 
   const approvalPctGlobal = parsePctFromString(kpis?.approvalRate);
   const apprStatus = approvalKpiStatus(approvalPctGlobal);
@@ -307,7 +387,13 @@ export default function QBRReport({ report: rawReport, meta }) {
   const approvalChartData = useMemo(() => {
     const labels = monthly.map((r) => String(r.month ?? ""));
     const rates = monthly.map((r) =>
-      Math.min(100, Math.max(0, Number(r.approvalRate) || 0))
+      Math.min(
+        100,
+        Math.max(
+          0,
+          Number(r.approvalRate ?? r.approval_rate ?? r.rate) || 0
+        )
+      )
     );
     const barColors = rates.map((v) =>
       v > 70 ? Y.blue : Y.gray
@@ -383,7 +469,9 @@ export default function QBRReport({ report: rawReport, meta }) {
 
   const tpvChartData = useMemo(() => {
     const labels = monthly.map((r) => r.month ?? "");
-    const data = monthly.map((r) => parseMagnitudeRough(r.totalVolume));
+    const data = monthly.map((r) =>
+      parseMagnitudeRough(r.totalVolume ?? r.total_volume)
+    );
     return {
       labels,
       datasets: [
@@ -399,7 +487,9 @@ export default function QBRReport({ report: rawReport, meta }) {
 
   const txnChartData = useMemo(() => {
     const labels = monthly.map((r) => r.month ?? "");
-    const data = monthly.map((r) => parseCountRough(r.transactions));
+    const data = monthly.map((r) =>
+      parseCountRough(r.transactions ?? r.transaction_count)
+    );
     return {
       labels,
       datasets: [
@@ -515,7 +605,10 @@ export default function QBRReport({ report: rawReport, meta }) {
   const printHalftone = useMemo(() => halftoneBoxShadow(7, 5, 8), []);
 
   const topOpp =
-    report?.top3Opportunities?.[0]?.lostVolume ?? kpis?.topOpportunity ?? "—";
+    top3Opportunities[0]?.lostVolume ??
+    top3Opportunities[0]?.lost_volume ??
+    kpis?.topOpportunity ??
+    "—";
 
   const printPortal = createPortal(
     <div id="qbr-print-document">
@@ -907,9 +1000,9 @@ export default function QBRReport({ report: rawReport, meta }) {
                         </div>
                       </div>
                     </div>
-                    {report?.trendAnalysis ? (
+                    {trendAnalysisText ? (
                       <div className="qbr-trend" style={{ marginTop: 16 }}>
-                        {report.trendAnalysis}
+                        {trendAnalysisText}
                       </div>
                     ) : null}
                   </div>

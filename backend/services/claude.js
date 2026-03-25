@@ -119,25 +119,22 @@ REQUIRED JSON SCHEMA:
 }`;
 
 /**
- * Strip markdown code fences and parse JSON; fallback to first {...} block.
- * @param {string} raw
- * @returns {unknown}
+ * Extrai o primeiro objeto JSON `{...}` da resposta e faz parse.
+ * @param {string} text
+ * @returns {object | null}
  */
-function parseClaudeJSON(raw) {
-  let t = String(raw || "").trim();
-  t = t.replace(/^```(?:json)?\s*/i, "");
-  t = t.replace(/\s*```\s*$/i, "");
-  t = t.trim();
+function parseClaudeJSON(text) {
+  const t = String(text ?? "");
   try {
-    return JSON.parse(t);
-  } catch {
     const start = t.indexOf("{");
     const end = t.lastIndexOf("}");
-    if (start >= 0 && end > start) {
-      const slice = t.slice(start, end + 1);
-      return JSON.parse(slice);
-    }
-    throw new Error("Could not parse JSON from model response");
+    if (start === -1 || end === -1) throw new Error("No JSON found");
+    const clean = t.slice(start, end + 1);
+    return JSON.parse(clean);
+  } catch (err) {
+    console.error("PARSE_ERROR:", err.message);
+    console.error("RAW_TEXT:", t.slice(0, 1000));
+    return null;
   }
 }
 
@@ -218,13 +215,9 @@ Follow all system instructions. Respond with ONLY the JSON object, no other text
     return templateReportJSON(input);
   }
 
-  try {
-    const parsed = parseClaudeJSON(text);
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      return parsed;
-    }
-  } catch (e) {
-    console.error("Claude JSON parse error:", e?.message || e);
+  const parsed = parseClaudeJSON(text);
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+    return parsed;
   }
 
   return templateReportJSON(input);
