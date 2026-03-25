@@ -640,6 +640,115 @@
   margin: 20px 0;
 }
 
+/* ---------- Issues (Jira CSV) ---------- */
+.qbr-issues-kpi-strip {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0;
+  background: #fff;
+  border: 1px solid var(--yuno-border);
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+
+.qbr-issues-kpi-cell {
+  padding: 12px 14px;
+  border-right: 1px solid var(--yuno-border);
+  border-top: 3px solid var(--yuno-blue);
+}
+
+.qbr-issues-kpi-cell:last-child {
+  border-right: none;
+}
+
+@media (max-width: 900px) {
+  .qbr-issues-kpi-strip {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.qbr-issues-summary-ai {
+  background: #f7f8fc;
+  border-left: 3px solid var(--yuno-green);
+  padding: 14px 16px;
+  margin-bottom: 14px;
+  border-radius: 0 8px 8px 0;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.qbr-issues-metrics-link {
+  background: #eef0fd;
+  border-left: 3px solid var(--yuno-blue);
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  border-radius: 0 8px 8px 0;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.qbr-table--issues thead th {
+  background: var(--yuno-blue);
+  color: #fff;
+}
+
+.qbr-issue-row--highest {
+  background: rgba(226, 75, 74, 0.05);
+}
+
+.qbr-issue-row--high {
+  background: rgba(224, 160, 32, 0.05);
+}
+
+.qbr-issue-row--closed {
+  opacity: 0.5;
+}
+
+.qbr-prio-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.qbr-prio-badge--crit {
+  background: rgba(226, 75, 74, 0.15);
+  color: var(--yuno-crit);
+}
+
+.qbr-prio-badge--warn {
+  background: rgba(224, 160, 32, 0.2);
+  color: var(--yuno-warn);
+}
+
+.qbr-prio-badge--neutral {
+  background: var(--yuno-lilac);
+  color: var(--yuno-gray);
+}
+
+.qbr-prio-badge--closed {
+  background: #e8eaf5;
+  color: var(--yuno-gray);
+}
+
+.qbr-btn-toggle-tickets {
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--yuno-border);
+  background: #fff;
+  color: var(--yuno-blue);
+  font-weight: 700;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.qbr-btn-toggle-tickets:hover {
+  background: var(--yuno-bg);
+}
+
 @media print {
   /* Portal em document.body: esconde o resto da app, só imprime o QBR */
   body > *:not(#qbr-print-document) {

@@ -37,7 +37,8 @@ export async function fetchJson(path, options = {}) {
 
 /**
  * POST /api/generate — resposta JSON { success, report, meta }.
- * Com `pdfFile`: multipart/form-data (partnerId, partnerName, period, region, generatedBy, file).
+ * Com `dataFile`: multipart/form-data (partnerId, partnerName, period, region, generatedBy, file).
+ * Opcional `issuesFile`: campo `issues` (CSV Jira).
  * Sem arquivo: application/json (fluxo Metabase/sample).
  *
  * @param {{
@@ -49,14 +50,15 @@ export async function fetchJson(path, options = {}) {
  *   start?: string
  *   end?: string
  * }} payload
- * @param {File | null | undefined} [pdfFile]
+ * @param {File | null | undefined} [dataFile]
+ * @param {File | null | undefined} [issuesFile]
  * @returns {Promise<{ success: boolean, report: object, meta: object }>}
  */
-export async function generateReport(payload, pdfFile) {
+export async function generateReport(payload, dataFile, issuesFile) {
   const url = apiPath("/api/generate");
 
   let res;
-  if (pdfFile instanceof File) {
+  if (dataFile instanceof File || issuesFile instanceof File) {
     const fd = new FormData();
     fd.append("partnerId", payload.partnerId);
     fd.append("partnerName", payload.partnerName);
@@ -67,7 +69,12 @@ export async function generateReport(payload, pdfFile) {
     if (payload.generatedBy != null && payload.generatedBy !== "") {
       fd.append("generatedBy", payload.generatedBy);
     }
-    fd.append("file", pdfFile, pdfFile.name || "report.pdf");
+    if (dataFile instanceof File) {
+      fd.append("file", dataFile, dataFile.name || "report.csv");
+    }
+    if (issuesFile instanceof File) {
+      fd.append("issues", issuesFile, issuesFile.name || "issues.csv");
+    }
     res = await fetch(url, { method: "POST", body: fd });
   } else {
     res = await fetch(url, {

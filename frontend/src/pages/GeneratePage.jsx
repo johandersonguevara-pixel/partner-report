@@ -130,12 +130,14 @@ export default function GeneratePage({ user, onGenerated }) {
   const [partners, setPartners] = useState([])
   const [partner, setPartner]   = useState('')
   const [quarter, setQuarter]   = useState('')
-  const [pdfFile, setPdfFile]   = useState(null)
+  const [dataFile, setDataFile] = useState(null)
+  const [issuesFile, setIssuesFile] = useState(null)
   const [status, setStatus]     = useState('idle')
   const [currentStep, setStep]  = useState(-1)
   const [result, setResult]     = useState(null)
   const [error, setError]       = useState('')
   const fileInputRef            = useRef(null)
+  const issuesInputRef          = useRef(null)
 
   useEffect(() => {
     let cancelled = false
@@ -180,7 +182,8 @@ export default function GeneratePage({ user, onGenerated }) {
           region: sel.region,
           generatedBy: user.name,
         },
-        pdfFile || undefined
+        dataFile || undefined,
+        issuesFile || undefined
       )
       clearInterval(interval)
 
@@ -220,28 +223,56 @@ export default function GeneratePage({ user, onGenerated }) {
     }
   }
 
-  function onPdfPick(e) {
+  function onDataFilePick(e) {
     const f = e.target.files?.[0]
     if (!f) {
-      setPdfFile(null)
+      setDataFile(null)
       return
     }
+    const name = (f.name || '').toLowerCase()
     const ok =
       f.type === 'application/pdf' ||
-      (f.name || '').toLowerCase().endsWith('.pdf')
+      f.type === 'text/csv' ||
+      name.endsWith('.pdf') ||
+      name.endsWith('.csv')
     if (!ok) {
-      setError('Apenas ficheiros PDF são aceites.')
+      setError('Use PDF ou CSV para dados de pagamento.')
       e.target.value = ''
-      setPdfFile(null)
+      setDataFile(null)
       return
     }
     setError('')
-    setPdfFile(f)
+    setDataFile(f)
   }
 
-  function clearPdf() {
-    setPdfFile(null)
+  function onIssuesPick(e) {
+    const f = e.target.files?.[0]
+    if (!f) {
+      setIssuesFile(null)
+      return
+    }
+    const name = (f.name || '').toLowerCase()
+    const ok =
+      f.type === 'text/csv' ||
+      name.endsWith('.csv')
+    if (!ok) {
+      setError('Issues Jira: apenas CSV.')
+      e.target.value = ''
+      setIssuesFile(null)
+      return
+    }
+    setError('')
+    setIssuesFile(f)
+  }
+
+  function clearDataFile() {
+    setDataFile(null)
     if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
+  function clearIssuesFile() {
+    setIssuesFile(null)
+    if (issuesInputRef.current) issuesInputRef.current.value = ''
   }
 
   function reset() {
@@ -251,7 +282,8 @@ export default function GeneratePage({ user, onGenerated }) {
     setError('')
     setPartner('')
     setQuarter('')
-    clearPdf()
+    clearDataFile()
+    clearIssuesFile()
   }
 
   const labelStyle = { display:'block', fontSize:10, fontWeight:600, textTransform:'uppercase', letterSpacing:1.5, color:B.grayDark, marginBottom:6 }
@@ -263,7 +295,7 @@ export default function GeneratePage({ user, onGenerated }) {
         <div style={{ fontSize:22, fontWeight:400, color:B.black, marginBottom:4 }}>
           Olá, <strong>{user.name.split(' ')[0]}</strong> 👋
         </div>
-        <div style={{ fontSize:13, color:B.gray }}>Selecione parceiro e quarter. Opcionalmente envie um PDF com dados para o QBR.</div>
+        <div style={{ fontSize:13, color:B.gray }}>Selecione parceiro e quarter. CSV/PDF de dados ou só Metabase; opcionalmente CSV de issues Jira.</div>
       </div>
 
       <div style={{ display:'grid', gridTemplateColumns:'320px 1fr', gap:24, alignItems:'start' }}>
@@ -294,22 +326,22 @@ export default function GeneratePage({ user, onGenerated }) {
               {QUARTERS.map(q => <option key={q}>{q}</option>)}
             </select>
 
-            <label style={labelStyle}>Dados (opcional)</label>
-            <div style={{ marginBottom:16, fontSize:12, color:B.gray, lineHeight:1.5 }}>
-              Envie um PDF com tabelas/dados para a IA usar como fonte. Se não enviar, usamos os dados do Metabase (ou exemplo).
+            <label style={labelStyle}>Dados de pagamento (CSV ou PDF — opcional)</label>
+            <div style={{ marginBottom:10, fontSize:12, color:B.gray, lineHeight:1.5 }}>
+              Se não enviar, usamos Metabase (ou dados de exemplo). Para QBR a partir de export: use CSV ou PDF com as tabelas.
             </div>
             <input
               ref={fileInputRef}
               type="file"
-              accept=".pdf,application/pdf"
-              onChange={onPdfPick}
+              accept=".csv,.pdf,text/csv,application/pdf"
+              onChange={onDataFilePick}
               disabled={status === 'loading'}
               style={{ display:'none' }}
-              id="qbr-pdf-upload"
+              id="qbr-data-upload"
             />
             <div style={{ display:'flex', flexWrap:'wrap', alignItems:'center', gap:8, marginBottom:16 }}>
               <label
-                htmlFor="qbr-pdf-upload"
+                htmlFor="qbr-data-upload"
                 style={{
                   padding:'8px 14px',
                   borderRadius:8,
@@ -322,14 +354,14 @@ export default function GeneratePage({ user, onGenerated }) {
                   opacity: status === 'loading' ? 0.6 : 1,
                 }}
               >
-                Escolher PDF…
+                Escolher CSV / PDF…
               </label>
-              {pdfFile ? (
+              {dataFile ? (
                 <span style={{ fontSize:12, color:B.black, flex:1, minWidth:0, wordBreak:'break-all' }}>
-                  <strong>{pdfFile.name}</strong>
+                  <strong>{dataFile.name}</strong>
                   <button
                     type="button"
-                    onClick={clearPdf}
+                    onClick={clearDataFile}
                     disabled={status === 'loading'}
                     style={{ marginLeft:8, padding:'2px 8px', fontSize:11, borderRadius:6, border:'1px solid #fecaca', background:'#fef2f2', color:'#dc2626', cursor:'pointer', fontFamily:'inherit' }}
                   >
@@ -337,7 +369,54 @@ export default function GeneratePage({ user, onGenerated }) {
                   </button>
                 </span>
               ) : (
-                <span style={{ fontSize:12, color:B.gray }}>Nenhum ficheiro selecionado</span>
+                <span style={{ fontSize:12, color:B.gray }}>Nenhum ficheiro</span>
+              )}
+            </div>
+
+            <label style={labelStyle}>Issues Jira (CSV opcional)</label>
+            <div style={{ marginBottom:10, fontSize:12, color:B.gray, lineHeight:1.5 }}>
+              Gere com o prompt: &quot;Gera uma tabela CSV com todos os tickets relacionados ao parceiro [NOME] dos últimos 3 meses…&quot;
+            </div>
+            <input
+              ref={issuesInputRef}
+              type="file"
+              accept=".csv,text/csv"
+              onChange={onIssuesPick}
+              disabled={status === 'loading'}
+              style={{ display:'none' }}
+              id="qbr-issues-upload"
+            />
+            <div style={{ display:'flex', flexWrap:'wrap', alignItems:'center', gap:8, marginBottom:16 }}>
+              <label
+                htmlFor="qbr-issues-upload"
+                style={{
+                  padding:'8px 14px',
+                  borderRadius:8,
+                  border:`1px solid ${B.lilac}`,
+                  background:'#F5F6FA',
+                  fontSize:12,
+                  fontWeight:600,
+                  color:B.blueDark,
+                  cursor: status === 'loading' ? 'not-allowed' : 'pointer',
+                  opacity: status === 'loading' ? 0.6 : 1,
+                }}
+              >
+                Escolher CSV de issues…
+              </label>
+              {issuesFile ? (
+                <span style={{ fontSize:12, color:B.black, flex:1, minWidth:0, wordBreak:'break-all' }}>
+                  <strong>{issuesFile.name}</strong>
+                  <button
+                    type="button"
+                    onClick={clearIssuesFile}
+                    disabled={status === 'loading'}
+                    style={{ marginLeft:8, padding:'2px 8px', fontSize:11, borderRadius:6, border:'1px solid #fecaca', background:'#fef2f2', color:'#dc2626', cursor:'pointer', fontFamily:'inherit' }}
+                  >
+                    Remover
+                  </button>
+                </span>
+              ) : (
+                <span style={{ fontSize:12, color:B.gray }}>Nenhum ficheiro</span>
               )}
             </div>
 

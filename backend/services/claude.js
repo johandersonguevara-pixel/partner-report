@@ -115,7 +115,19 @@ REQUIRED JSON SCHEMA:
       "expectedImpact": "string",
       "category": "urgente | tecnico | comercial"
     }
-  ]
+  ],
+  "issuesAnalysis": {
+    "summary": "string — análise dos issues abertos e impacto na parceria",
+    "criticalOpen": [
+      {
+        "ticket": "string",
+        "problem": "string",
+        "impact": "string",
+        "suggestedAction": "string"
+      }
+    ],
+    "connectionToMetrics": "string — como os issues explicam quedas de approval rate ou outros problemas"
+  }
 }`;
 
 /**
@@ -169,6 +181,7 @@ function templateReportJSON({ partnerName, period, metrics: _metrics }) {
     top3Opportunities: [],
     growthOpportunities: [],
     nextSteps: [],
+    issuesAnalysis: null,
   };
 }
 
@@ -179,6 +192,7 @@ function templateReportJSON({ partnerName, period, metrics: _metrics }) {
  *   period: string
  *   rawDataText?: string
  *   metrics?: unknown
+ *   issuesPromptSection?: string
  * }} input
  * @returns {Promise<object>}
  */
@@ -186,6 +200,10 @@ export async function generateReportJSON(input) {
   if (!client) {
     return templateReportJSON(input);
   }
+
+  const issuesBlock = input.issuesPromptSection?.trim()
+    ? `\n\n${input.issuesPromptSection.trim()}\n`
+    : "";
 
   const userMessage = `Generate a QBR report for partner: ${input.partnerName}
 Partner ID: ${input.partnerId}
@@ -195,6 +213,9 @@ RAW DATA FROM DATABASE:
 ---
 ${input.rawDataText || JSON.stringify(input.metrics ?? {}, null, 2)}
 ---
+${issuesBlock}
+
+If OPEN ISSUES SUMMARY was provided above, you MUST include a filled "issuesAnalysis" object (summary, criticalOpen, connectionToMetrics) using only those ticket data. If no issues block was provided, set "issuesAnalysis" to null.
 
 Follow all system instructions. Respond with ONLY the JSON object, no other text.`;
 

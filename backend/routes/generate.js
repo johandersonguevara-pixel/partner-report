@@ -8,6 +8,9 @@ import { v4 as uuidv4 } from "uuid";
 import { generateReportJSON } from "../services/claude.js";
 import { fetchPartnerMetrics } from "../services/metabase.js";
 import { appendHistory } from "./history.js";
+import { parseIssuesCSV } from "../services/csvParser.js";
+import { generateInsights } from "../services/insightsGenerator.js";
+import { buildReport } from "../services/reportBuilder.js";
 
 const require = createRequire(import.meta.url);
 const pdfParse = require("pdf-parse");
@@ -21,10 +24,16 @@ const upload = multer({
   fileFilter: (_req, file, cb) => {
     const name = (file.originalname || "").toLowerCase();
     const mt = file.mimetype || "";
-    if (mt === "application/pdf" || name.endsWith(".pdf")) {
+    const okPdf = mt === "application/pdf" || name.endsWith(".pdf");
+    const okCsv =
+      mt === "text/csv" ||
+      mt === "application/vnd.ms-excel" ||
+      name.endsWith(".csv") ||
+      mt === "text/plain";
+    if (okPdf || okCsv) {
       return cb(null, true);
     }
-    const err = new Error("Invalid file type. Upload a PDF.");
+    const err = new Error("Invalid file type. Use PDF or CSV.");
     err.statusCode = 400;
     cb(err);
   },
@@ -35,7 +44,10 @@ export const generateRouter = express.Router();
 function conditionalUpload(req, res, next) {
   const ct = (req.headers["content-type"] || "").toLowerCase();
   if (ct.includes("multipart/form-data")) {
-    return upload.single("file")(req, res, (err) => {
+    return upload.fields([
+      { name: "file", maxCount: 1 },
+      { name: "issues", maxCount: 1 },
+    ])(req, res, (err) => {
       if (err) return next(err);
       next();
     });
@@ -100,19 +112,47 @@ generateRouter.post("/", conditionalUpload, async (req, res, next) => {
     const periodLabel = period || "Current period";
     const name = partnerName || partner.name;
 
-    const file = req.file;
-    const hasPdfUpload = Boolean(file?.buffer?.length);
+    const mainFile = req.files?.["file"]?.[0];
+    const issuesFile = req.files?.["issues"]?.[0];
+
+    let issuesData = null;
+    if (issuesFile?.buffer?.length) {
+      const issuesText = issuesFile.buffer.toString("utf8");
+      issuesData = parseIssuesCSV(issuesText);
+    }
 
     let rawDataText = "";
     let metricsBundle = {};
 
-    if (hasPdfUpload) {
-      console.log(`📄 Extracting text from uploaded PDF (${file.size} bytes)`);
-      rawDataText = await extractPdfText(file.buffer);
-      if (!rawDataText) {
+    if (mainFile?.buffer?.length) {
+      const fname = (mainFile.originalname || "").toLowerCase();
+      const isPdf =
+        mainFile.mimetype === "application/pdf" || fname.endsWith(".pdf");
+      const isCsv =
+        fname.endsWith(".csv") ||
+        mainFile.mimetype === "text/csv" ||
+        mainFile.mimetype === "text/plain";
+
+      if (isPdf) {
+        console.log(`📄 Extracting text from uploaded PDF (${mainFile.size} bytes)`);
+        rawDataText = await extractPdfText(mainFile.buffer);
+        if (!rawDataText) {
+          return res.status(400).json({
+            error:
+              "No text could be extracted from the PDF (empty or image-only document)",
+          });
+        }
+      } else if (isCsv) {
+        console.log(`📄 Using uploaded CSV as raw data (${mainFile.size} bytes)`);
+        rawDataText = mainFile.buffer.toString("utf8").trim();
+        if (!rawDataText) {
+          return res.status(400).json({
+            error: "CSV file is empty",
+          });
+        }
+      } else {
         return res.status(400).json({
-          error:
-            "No text could be extracted from the PDF (empty or image-only document)",
+          error: "Main file must be a PDF or CSV",
         });
       }
     } else {
@@ -120,19 +160,34 @@ generateRouter.post("/", conditionalUpload, async (req, res, next) => {
       metricsBundle = await fetchPartnerMetrics(partnerId, { start, end });
     }
 
+    const { issuesPromptSection } = generateInsights({ issuesData });
+
     console.log(`🧠 Generating QBR JSON with Claude...`);
-    const reportJSON = await generateReportJSON({
+    const claudeJson = await generateReportJSON({
       partnerId,
       partnerName: name,
       period: periodLabel,
       rawDataText,
       metrics: metricsBundle,
+      issuesPromptSection,
     });
+
+    const reportJSON = buildReport({ claudeJson, issuesData });
 
     console.log("CLAUDE_JSON_RAW:", JSON.stringify(reportJSON, null, 2));
 
     const generatedAt = new Date().toISOString();
     const id = uuidv4();
+
+    const dataSourceParts = [];
+    if (mainFile?.buffer?.length) {
+      const fn = (mainFile.originalname || "").toLowerCase();
+      dataSourceParts.push(fn.endsWith(".csv") ? "csv_upload" : "pdf_upload");
+    } else {
+      dataSourceParts.push(metricsBundle.source || "metabase_or_sample");
+    }
+    if (issuesData?.totalTickets) dataSourceParts.push("jira_issues_csv");
+
     const entry = {
       id,
       partnerId,
@@ -145,7 +200,7 @@ generateRouter.post("/", conditionalUpload, async (req, res, next) => {
       filename: `Yuno_QBR_${name.replace(/\s/g, "_")}_${periodLabel.replace(/\s/g, "_")}.json`,
       generated_at: new Date().toLocaleString("pt-BR"),
       createdAt: generatedAt,
-      dataSource: hasPdfUpload ? "pdf_upload" : metricsBundle.source || "metabase_or_sample",
+      dataSource: dataSourceParts.join("+"),
     };
 
     try {

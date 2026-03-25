@@ -204,6 +204,7 @@ export default function QBRReport({ report: rawReport, meta }) {
   const [activeTab, setActiveTab] = useState("overview");
   const [showExport, setShowExport] = useState(false);
   const [filterCat, setFilterCat] = useState("all");
+  const [showAllIssueTickets, setShowAllIssueTickets] = useState(false);
   const nextSteps = Array.isArray(report?.nextSteps)
     ? report.nextSteps
     : Array.isArray(report?.next_steps)
@@ -278,6 +279,55 @@ export default function QBRReport({ report: rawReport, meta }) {
     report?.trendAnalysis ?? report?.trend_analysis ?? "";
   const top3Opportunities =
     report?.top3Opportunities ?? report?.top_3_opportunities ?? [];
+
+  const issuesData = report?.issuesData ?? report?.issues_data ?? null;
+  const issuesAnalysis =
+    report?.issuesAnalysis ?? report?.issues_analysis ?? null;
+  const issuesSummaryText =
+    issuesAnalysis?.summary ?? issuesAnalysis?.issues_summary ?? "";
+  const issuesMetricsLinkText =
+    issuesAnalysis?.connectionToMetrics ??
+    issuesAnalysis?.connection_to_metrics ??
+    "";
+
+  const issuesCriticalRows = useMemo(() => {
+    const ai =
+      issuesAnalysis?.criticalOpen ?? issuesAnalysis?.critical_open;
+    if (Array.isArray(ai) && ai.length > 0) {
+      return ai.map((row) => ({
+        ticket: row.ticket ?? "—",
+        problem: row.problem ?? "—",
+        impact: row.impact ?? "—",
+        merchant: row.merchant ?? row.Merchant ?? "—",
+        priority: row.priority ?? "—",
+        suggestedAction:
+          row.suggestedAction ?? row.suggested_action ?? "—",
+        isOpen: true,
+        closed: false,
+      }));
+    }
+    if (!issuesData?.openTickets?.length) return [];
+    return issuesData.openTickets
+      .filter((t) => t.priority === "Highest" || t.priority === "High")
+      .map((t) => ({
+        ticket: t.ticket,
+        problem: t.problem,
+        impact: t.impact,
+        merchant: t.merchant,
+        priority: t.priority,
+        suggestedAction: "—",
+        isOpen: true,
+        closed: false,
+      }));
+  }, [issuesAnalysis, issuesData]);
+
+  const allIssueTickets = useMemo(() => {
+    if (!issuesData) return [];
+    return [
+      ...(issuesData.openTickets || []),
+      ...(issuesData.closedTickets || []),
+    ];
+  }, [issuesData]);
 
   const approvalPctGlobal = parsePctFromString(kpis?.approvalRate);
   const apprStatus = approvalKpiStatus(approvalPctGlobal);
@@ -772,6 +822,7 @@ export default function QBRReport({ report: rawReport, meta }) {
                   ["performance", "Performance"],
                   ["merchants", "Merchants"],
                   ["declines", "Rejeições"],
+                  ["issues", "Issues"],
                   ["nextsteps", "Próximos Passos"],
                 ].map(([id, label]) => (
                   <button
@@ -1211,6 +1262,239 @@ export default function QBRReport({ report: rawReport, meta }) {
                       </div>
                     </div>
                   </>
+                )}
+
+                {activeTab === "issues" && (
+                  <div className="qbr-issues-panel">
+                    {!issuesData?.totalTickets ? (
+                      <div className="qbr-card">
+                        <p style={{ color: Y.gray, margin: 0 }}>
+                          Nenhum CSV de issues Jira foi carregado neste relatório.
+                          Na geração, anexe o ficheiro opcional &quot;Issues Jira&quot;
+                          para ver KPIs, análise e tabelas aqui.
+                        </p>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="qbr-issues-kpi-strip">
+                          <div
+                            className="qbr-issues-kpi-cell"
+                            style={{ borderTopColor: Y.ok }}
+                          >
+                            <div className="qbr-kpi-label">Total tickets</div>
+                            <div className="qbr-kpi-value">
+                              {issuesData.totalTickets}
+                            </div>
+                          </div>
+                          <div
+                            className="qbr-issues-kpi-cell"
+                            style={{
+                              borderTopColor:
+                                issuesData.summary.totalOpen > 5
+                                  ? Y.crit
+                                  : Y.ok,
+                            }}
+                          >
+                            <div className="qbr-kpi-label">Abertos</div>
+                            <div
+                              className="qbr-kpi-value"
+                              style={{
+                                color:
+                                  issuesData.summary.totalOpen > 5
+                                    ? Y.crit
+                                    : Y.black,
+                              }}
+                            >
+                              {issuesData.summary.totalOpen}
+                            </div>
+                          </div>
+                          <div
+                            className="qbr-issues-kpi-cell"
+                            style={{
+                              borderTopColor:
+                                issuesData.summary.highestOpen > 0
+                                  ? Y.crit
+                                  : Y.ok,
+                            }}
+                          >
+                            <div className="qbr-kpi-label">
+                              Highest abertos
+                            </div>
+                            <div
+                              className="qbr-kpi-value"
+                              style={{
+                                color:
+                                  issuesData.summary.highestOpen > 0
+                                    ? Y.crit
+                                    : Y.black,
+                              }}
+                            >
+                              {issuesData.summary.highestOpen}
+                            </div>
+                          </div>
+                          <div
+                            className="qbr-issues-kpi-cell"
+                            style={{ borderTopColor: Y.ok }}
+                          >
+                            <div className="qbr-kpi-label">
+                              Merchants afetados
+                            </div>
+                            <div className="qbr-kpi-value">
+                              {issuesData.merchantsAffected?.length ?? 0}
+                            </div>
+                          </div>
+                        </div>
+
+                        {issuesSummaryText ? (
+                          <div className="qbr-issues-summary-ai">
+                            {issuesSummaryText}
+                          </div>
+                        ) : null}
+
+                        {issuesMetricsLinkText ? (
+                          <div className="qbr-issues-metrics-link">
+                            {issuesMetricsLinkText}
+                          </div>
+                        ) : null}
+
+                        <h2 className="qbr-h2">Issues críticos abertos</h2>
+                        <div className="qbr-table-wrap qbr-table-wrap--issues">
+                          <table className="qbr-table qbr-table--issues">
+                            <thead>
+                              <tr>
+                                <th>Ticket</th>
+                                <th>Problema</th>
+                                <th>Impacto</th>
+                                <th>Merchant</th>
+                                <th>Prioridade</th>
+                                <th>Ação sugerida</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {issuesCriticalRows.length === 0 ? (
+                                <tr>
+                                  <td colSpan={6} style={{ color: Y.gray }}>
+                                    —
+                                  </td>
+                                </tr>
+                              ) : (
+                                issuesCriticalRows.map((row, i) => {
+                                  const pr = String(row.priority ?? "").trim();
+                                  const rowCls =
+                                    pr === "Highest" ||
+                                    pr === "" ||
+                                    pr === "—"
+                                      ? "qbr-issue-row--highest"
+                                      : pr === "High"
+                                        ? "qbr-issue-row--high"
+                                        : "";
+                                  return (
+                                    <tr key={i} className={rowCls}>
+                                      <td>{row.ticket}</td>
+                                      <td>{row.problem}</td>
+                                      <td>{row.impact}</td>
+                                      <td>{row.merchant}</td>
+                                      <td>
+                                        <span
+                                          className={`qbr-prio-badge ${
+                                            pr === "Highest" ||
+                                            pr === "" ||
+                                            pr === "—"
+                                              ? "qbr-prio-badge--crit"
+                                              : pr === "High"
+                                                ? "qbr-prio-badge--warn"
+                                                : "qbr-prio-badge--neutral"
+                                          }`}
+                                        >
+                                          {row.priority && row.priority !== "—"
+                                            ? row.priority
+                                            : "Highest"}
+                                        </span>
+                                      </td>
+                                      <td>{row.suggestedAction}</td>
+                                    </tr>
+                                  );
+                                })
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+
+                        <div style={{ marginTop: 20 }}>
+                          <button
+                            type="button"
+                            className="qbr-btn-toggle-tickets"
+                            onClick={() =>
+                              setShowAllIssueTickets((v) => !v)
+                            }
+                          >
+                            {showAllIssueTickets
+                              ? "Ocultar lista completa"
+                              : `Ver todos os ${allIssueTickets.length} tickets`}
+                          </button>
+                        </div>
+
+                        {showAllIssueTickets ? (
+                          <div
+                            className="qbr-table-wrap qbr-table-wrap--issues"
+                            style={{ marginTop: 12 }}
+                          >
+                            <table className="qbr-table qbr-table--issues">
+                              <thead>
+                                <tr>
+                                  <th>Ticket</th>
+                                  <th>Status</th>
+                                  <th>Problema</th>
+                                  <th>Merchant</th>
+                                  <th>Prioridade</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {allIssueTickets.map((t, i) => {
+                                  const closed = !t.isOpen;
+                                  const pr = t.priority;
+                                  const rowCls = [
+                                    closed ? "qbr-issue-row--closed" : "",
+                                    !closed && pr === "Highest"
+                                      ? "qbr-issue-row--highest"
+                                      : "",
+                                    !closed && pr === "High"
+                                      ? "qbr-issue-row--high"
+                                      : "",
+                                  ]
+                                    .filter(Boolean)
+                                    .join(" ");
+                                  return (
+                                    <tr key={i} className={rowCls}>
+                                      <td>{t.ticket}</td>
+                                      <td>{t.status}</td>
+                                      <td>{t.problem}</td>
+                                      <td>{t.merchant}</td>
+                                      <td>
+                                        <span
+                                          className={`qbr-prio-badge ${
+                                            closed
+                                              ? "qbr-prio-badge--closed"
+                                              : pr === "Highest"
+                                                ? "qbr-prio-badge--crit"
+                                                : pr === "High"
+                                                  ? "qbr-prio-badge--warn"
+                                                  : "qbr-prio-badge--neutral"
+                                          }`}
+                                        >
+                                          {t.priority}
+                                        </span>
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        ) : null}
+                      </>
+                    )}
+                  </div>
                 )}
 
                 {activeTab === "nextsteps" && (
