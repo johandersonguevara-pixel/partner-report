@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   Chart as ChartJS,
@@ -13,6 +13,8 @@ import {
   Filler,
 } from "chart.js";
 import { Chart, Bar, Doughnut } from "react-chartjs-2";
+import { detectSensitiveData } from "../utils/sensitiveDataDetector.js";
+import { anonymizeBlock } from "../utils/anonymizer.js";
 import "./QBRReport.css";
 
 ChartJS.register(
@@ -158,6 +160,32 @@ function declineTypeColor(t) {
   return "#E0A020";
 }
 
+function HighlightedOriginal({ text, matches }) {
+  if (text == null || text === "") return "—";
+  const t = String(text);
+  if (!matches?.length) return t;
+  const sorted = [...matches].sort((a, b) => a.startIndex - b.startIndex);
+  const parts = [];
+  let last = 0;
+  sorted.forEach((m, idx) => {
+    if (m.startIndex > last) {
+      parts.push(
+        <span key={`p-${idx}-${last}`}>{t.slice(last, m.startIndex)}</span>
+      );
+    }
+    parts.push(
+      <mark key={`h-${m.startIndex}`} className="qbr-sens-highlight">
+        {t.slice(m.startIndex, m.endIndex)}
+      </mark>
+    );
+    last = m.endIndex;
+  });
+  if (last < t.length) {
+    parts.push(<span key="tail">{t.slice(last)}</span>);
+  }
+  return <>{parts}</>;
+}
+
 /** Desembrulha { report } / { data } e normaliza shape comum da API. */
 function unwrapReportPayload(raw) {
   if (!raw || typeof raw !== "object") return {};
@@ -205,6 +233,12 @@ export default function QBRReport({ report: rawReport, meta }) {
   const [showExport, setShowExport] = useState(false);
   const [filterCat, setFilterCat] = useState("all");
   const [showAllIssueTickets, setShowAllIssueTickets] = useState(false);
+  const [showReview, setShowReview] = useState(false);
+  const [reviewBlocks, setReviewBlocks] = useState([]);
+  const [allReviewed, setAllReviewed] = useState(false);
+  const [sensitiveScanClean, setSensitiveScanClean] = useState(null);
+  const prevShowExportRef = useRef(false);
+
   const nextSteps = Array.isArray(report?.nextSteps)
     ? report.nextSteps
     : Array.isArray(report?.next_steps)
@@ -216,6 +250,28 @@ export default function QBRReport({ report: rawReport, meta }) {
   useEffect(() => {
     setSelectedSteps(new Set(nextSteps.map((_, i) => String(i))));
   }, [nextSteps]);
+
+  useEffect(() => {
+    if (showExport && !prevShowExportRef.current) {
+      setShowReview(false);
+      setReviewBlocks([]);
+      setAllReviewed(false);
+      setSensitiveScanClean(null);
+    }
+    prevShowExportRef.current = showExport;
+  }, [showExport]);
+
+  useEffect(() => {
+    if (!reviewBlocks.length) {
+      setAllReviewed(false);
+      return;
+    }
+    setAllReviewed(
+      reviewBlocks.every(
+        (b) => b.status === "approved" || b.status === "anonymized"
+      )
+    );
+  }, [reviewBlocks]);
 
   const monthlyRaw =
     report?.monthlyPerformance ||
@@ -638,12 +694,84 @@ export default function QBRReport({ report: rawReport, meta }) {
       });
   }, [nextSteps, filterCat]);
 
-  const handlePrint = useCallback(() => {
+  const runPrint = useCallback(() => {
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         window.print();
       });
     });
+  }, []);
+
+  const getValueForPrint = useCallback(
+    (section, field, originalValue) => {
+      const v = originalValue == null ? "—" : String(originalValue);
+      const block = reviewBlocks.find(
+        (b) =>
+          b.section === section &&
+          b.field === field &&
+          b.originalValue === v
+      );
+      if (!block) return v;
+      if (block.status === "anonymized" && block.anonymizedValue != null) {
+        return block.anonymizedValue;
+      }
+      return v;
+    },
+    [reviewBlocks]
+  );
+
+  const nextStepCell = useCallback(
+    (i, key, step) => {
+      const raw = step?.[key];
+      const v = typeof raw === "string" ? raw : "—";
+      return getValueForPrint("nextSteps", `${i}.${key}`, v);
+    },
+    [getValueForPrint]
+  );
+
+  const pickTopOppForPrint = useCallback(() => {
+    const t0 = top3Opportunities[0];
+    if (t0?.lostVolume != null && typeof t0.lostVolume === "string") {
+      return getValueForPrint("top3", "0.lostVolume", t0.lostVolume);
+    }
+    if (t0?.lost_volume != null && typeof t0.lost_volume === "string") {
+      return getValueForPrint("top3", "0.lost_volume", t0.lost_volume);
+    }
+    return getValueForPrint(
+      "kpis",
+      "topOpportunity",
+      typeof kpis?.topOpportunity === "string" ? kpis.topOpportunity : "—"
+    );
+  }, [getValueForPrint, top3Opportunities, kpis?.topOpportunity]);
+
+  const onBaixarFromChecklist = useCallback(() => {
+    if (selectedSteps.size === 0) return;
+    const blocks = detectSensitiveData(report);
+    if (blocks.length === 0) {
+      setSensitiveScanClean(true);
+      setShowReview(false);
+      runPrint();
+    } else {
+      setSensitiveScanClean(false);
+      setReviewBlocks(blocks);
+      setShowReview(true);
+    }
+  }, [report, selectedSteps.size, runPrint]);
+
+  const approveReviewBlock = useCallback((id) => {
+    setReviewBlocks((prev) =>
+      prev.map((b) => (b.id === id ? { ...b, status: "approved" } : b))
+    );
+  }, []);
+
+  const anonymizeReviewBlock = useCallback((id) => {
+    setReviewBlocks((prev) =>
+      prev.map((b) => {
+        if (b.id !== id) return b;
+        const anonymizedValue = anonymizeBlock(b);
+        return { ...b, status: "anonymized", anonymizedValue };
+      })
+    );
   }, []);
 
   const selectedList = useMemo(() => {
@@ -695,14 +823,26 @@ export default function QBRReport({ report: rawReport, meta }) {
             style={{ margin: 0, borderTop: `3px solid ${Y.ok}` }}
           >
             <div className="qbr-kpi-label">Total TPV</div>
-            <div className="qbr-kpi-value">{kpis?.totalTPV ?? "—"}</div>
+            <div className="qbr-kpi-value">
+              {typeof kpis?.totalTPV === "string"
+                ? getValueForPrint("kpis", "totalTPV", kpis.totalTPV)
+                : kpis?.totalTPV ?? "—"}
+            </div>
           </div>
           <div
             className="qbr-card"
             style={{ margin: 0, borderTop: `3px solid ${Y.ok}` }}
           >
             <div className="qbr-kpi-label">Transações</div>
-            <div className="qbr-kpi-value">{kpis?.totalTransactions ?? "—"}</div>
+            <div className="qbr-kpi-value">
+              {typeof kpis?.totalTransactions === "string"
+                ? getValueForPrint(
+                    "kpis",
+                    "totalTransactions",
+                    kpis.totalTransactions
+                  )
+                : kpis?.totalTransactions ?? "—"}
+            </div>
           </div>
           <div
             className="qbr-card"
@@ -712,26 +852,38 @@ export default function QBRReport({ report: rawReport, meta }) {
             }}
           >
             <div className="qbr-kpi-label">Approval rate</div>
-            <div className="qbr-kpi-value">{kpis?.approvalRate ?? "—"}</div>
+            <div className="qbr-kpi-value">
+              {typeof kpis?.approvalRate === "string"
+                ? getValueForPrint("kpis", "approvalRate", kpis.approvalRate)
+                : kpis?.approvalRate ?? "—"}
+            </div>
           </div>
           <div
             className="qbr-card"
             style={{ margin: 0, borderTop: `3px solid ${Y.crit}` }}
           >
             <div className="qbr-kpi-label">Volume recusado</div>
-            <div className="qbr-kpi-value">{kpis?.declinedVolume ?? "—"}</div>
+            <div className="qbr-kpi-value">
+              {typeof kpis?.declinedVolume === "string"
+                ? getValueForPrint("kpis", "declinedVolume", kpis.declinedVolume)
+                : kpis?.declinedVolume ?? "—"}
+            </div>
           </div>
         </div>
 
         <div className="qbr-impact" style={{ marginBottom: 20 }}>
           <div className="qbr-impact-accent">Resumo de impacto</div>
           <div style={{ fontSize: 18, fontWeight: 800, marginTop: 8 }}>
-            {kpis?.declinedVolume ?? "—"}
+            {typeof kpis?.declinedVolume === "string"
+              ? getValueForPrint("kpis", "declinedVolume", kpis.declinedVolume)
+              : kpis?.declinedVolume ?? "—"}
           </div>
           <div className="qbr-impact-accent" style={{ marginTop: 12 }}>
             Oportunidade
           </div>
-          <div style={{ fontSize: 15, fontWeight: 700 }}>{topOpp}</div>
+          <div style={{ fontSize: 15, fontWeight: 700 }}>
+            {pickTopOppForPrint()}
+          </div>
         </div>
 
         <h2
@@ -765,10 +917,10 @@ export default function QBRReport({ report: rawReport, meta }) {
               selectedList.map(({ s, i }) => (
                 <tr key={i}>
                   <td>{s.priority ?? i + 1}</td>
-                  <td>{s.action ?? "—"}</td>
-                  <td>{s.owner ?? "—"}</td>
-                  <td>{s.deadline ?? "—"}</td>
-                  <td>{s.expectedImpact ?? "—"}</td>
+                  <td>{nextStepCell(i, "action", s)}</td>
+                  <td>{nextStepCell(i, "owner", s)}</td>
+                  <td>{nextStepCell(i, "deadline", s)}</td>
+                  <td>{nextStepCell(i, "expectedImpact", s)}</td>
                 </tr>
               ))
             )}
@@ -1560,6 +1712,146 @@ export default function QBRReport({ report: rawReport, meta }) {
                 <a href="https://www.y.uno">www.y.uno</a>
               </footer>
             </div>
+          ) : showReview ? (
+            <div className="qbr-review">
+              <div className="qbr-review-header">
+                <button
+                  type="button"
+                  className="qbr-export-back"
+                  onClick={() => setShowReview(false)}
+                >
+                  ← Voltar ao checklist
+                </button>
+                <div className="qbr-review-title">Revisão de dados sensíveis</div>
+                <div className="qbr-review-progress-meta">
+                  {
+                    reviewBlocks.filter(
+                      (b) =>
+                        b.status === "approved" || b.status === "anonymized"
+                    ).length
+                  }{" "}
+                  de {reviewBlocks.length} blocos revisados
+                </div>
+                <div className="qbr-review-progress-track">
+                  <div
+                    className="qbr-review-progress-fill"
+                    style={{
+                      width: `${reviewBlocks.length ? (100 * reviewBlocks.filter((b) => b.status === "approved" || b.status === "anonymized").length) / reviewBlocks.length : 0}%`,
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div className="qbr-review-explainer">
+                Identificamos dados que podem ser sensíveis neste relatório. Revise
+                cada item e escolha aprovação ou anonimização antes de gerar o PDF.
+              </div>
+
+              <div className="qbr-review-list">
+                {reviewBlocks.map((block) => {
+                  const typeLabels = [
+                    ...new Set(
+                      block.sensitiveMatches.map((m) => m.label)
+                    ),
+                  ];
+                  const statusLabel =
+                    block.status === "approved"
+                      ? "Aprovado"
+                      : block.status === "anonymized"
+                        ? "Anonimizado"
+                        : "Pendente";
+                  const cardMod =
+                    block.status === "approved"
+                      ? "qbr-review-card--approved"
+                      : block.status === "anonymized"
+                        ? "qbr-review-card--anonymized"
+                        : "qbr-review-card--pending";
+                  const pending = block.status === "pending";
+                  return (
+                    <div
+                      key={block.id}
+                      className={`qbr-review-card ${cardMod}`}
+                    >
+                      <div className="qbr-review-card-top">
+                        <span className="qbr-review-badge qbr-review-badge--section">
+                          {block.sectionLabel}
+                        </span>
+                        {typeLabels.map((lb) => (
+                          <span
+                            key={lb}
+                            className="qbr-review-badge qbr-review-badge--type"
+                          >
+                            {lb}
+                          </span>
+                        ))}
+                        <span
+                          className={`qbr-review-badge qbr-review-badge--status qbr-review-badge--status-${block.status}`}
+                        >
+                          {statusLabel}
+                        </span>
+                      </div>
+                      <div className="qbr-review-field">{block.field}</div>
+                      <div className="qbr-review-tlabel">Texto original:</div>
+                      <div className="qbr-review-original-box">
+                        <HighlightedOriginal
+                          text={block.originalValue}
+                          matches={block.sensitiveMatches}
+                        />
+                      </div>
+                      {block.status === "anonymized" &&
+                      block.anonymizedValue != null ? (
+                        <>
+                          <div className="qbr-review-tlabel qbr-review-tlabel--after">
+                            Após anonimização:
+                          </div>
+                          <div className="qbr-review-anon-box">
+                            {block.anonymizedValue}
+                          </div>
+                        </>
+                      ) : null}
+                      <div className="qbr-review-card-actions">
+                        <button
+                          type="button"
+                          className="qbr-review-btn-approve"
+                          disabled={!pending}
+                          onClick={() => approveReviewBlock(block.id)}
+                        >
+                          Aprovar como está
+                        </button>
+                        <button
+                          type="button"
+                          className="qbr-review-btn-anon"
+                          disabled={!pending}
+                          onClick={() => anonymizeReviewBlock(block.id)}
+                        >
+                          Anonimizar dados
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="qbr-review-footer">
+                <span className="qbr-review-footer-count">
+                  {
+                    reviewBlocks.filter(
+                      (b) =>
+                        b.status === "approved" || b.status === "anonymized"
+                    ).length
+                  }{" "}
+                  de {reviewBlocks.length} itens revisados
+                </span>
+                <button
+                  type="button"
+                  className="qbr-btn-pdf"
+                  disabled={!allReviewed}
+                  onClick={runPrint}
+                >
+                  Gerar PDF revisado
+                </button>
+              </div>
+            </div>
           ) : (
             <div className="qbr-export">
               <div className="qbr-export-header">
@@ -1712,14 +2004,21 @@ export default function QBRReport({ report: rawReport, meta }) {
                   revisadas pelo Partner Manager antes da apresentação ao parceiro.
                 </div>
                 <div className="qbr-export-actions">
-                  <span style={{ fontSize: 13, color: Y.gray }}>
-                    {selectedSteps.size} selecionada(s)
-                  </span>
+                  <div className="qbr-export-actions-left">
+                    <span style={{ fontSize: 13, color: Y.gray }}>
+                      {selectedSteps.size} selecionada(s)
+                    </span>
+                    {sensitiveScanClean === true ? (
+                      <span className="qbr-sensitive-clean-badge">
+                        Nenhum dado sensível detectado
+                      </span>
+                    ) : null}
+                  </div>
                   <button
                     type="button"
                     className="qbr-btn-pdf"
                     disabled={selectedSteps.size === 0}
-                    onClick={handlePrint}
+                    onClick={onBaixarFromChecklist}
                   >
                     Baixar documento PDF
                   </button>

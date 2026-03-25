@@ -566,6 +566,251 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  flex-wrap: wrap;
+}
+
+.qbr-export-actions-left {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.qbr-sensitive-clean-badge {
+  display: inline-block;
+  width: fit-content;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: #f0fdf4;
+  color: #15803d;
+  border: 1px solid #bbf7d0;
+}
+
+.qbr-sens-highlight {
+  background: #fff3cd;
+  color: #856404;
+  padding: 0 2px;
+  border-radius: 2px;
+}
+
+/* ---------- Sensitive data review (before PDF) ---------- */
+.qbr-review {
+  display: flex;
+  flex-direction: column;
+  min-height: 480px;
+  background: var(--yuno-bg);
+}
+
+.qbr-review-header {
+  padding: 16px 20px;
+  background: #fff;
+  border-bottom: 1px solid var(--yuno-border);
+}
+
+.qbr-review-title {
+  font-size: 17px;
+  font-weight: 800;
+  color: var(--yuno-black);
+  margin: 10px 0 6px;
+}
+
+.qbr-review-progress-meta {
+  font-size: 12px;
+  color: var(--yuno-gray);
+  margin-bottom: 8px;
+}
+
+.qbr-review-progress-track {
+  height: 8px;
+  background: var(--yuno-lilac);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.qbr-review-progress-fill {
+  height: 100%;
+  background: #3e4fe0;
+  border-radius: 4px;
+  transition: width 0.25s ease;
+}
+
+.qbr-review-explainer {
+  margin: 16px 20px;
+  padding: 12px 16px;
+  background: #fff9e6;
+  border-left: 3px solid #e0a020;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--yuno-black);
+}
+
+.qbr-review-list {
+  flex: 1;
+  padding: 0 20px 100px;
+  overflow-y: auto;
+}
+
+.qbr-review-card {
+  border: 1px solid var(--yuno-border);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 14px;
+  background: #fff;
+  border-left-width: 3px;
+}
+
+.qbr-review-card--pending {
+  border-left-color: var(--yuno-border);
+}
+
+.qbr-review-card--approved {
+  border-left-color: #4ade80;
+}
+
+.qbr-review-card--anonymized {
+  border-left-color: #e0a020;
+}
+
+.qbr-review-card-top {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.qbr-review-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+
+.qbr-review-badge--section {
+  background: var(--yuno-lilac);
+  color: var(--yuno-dark-blue);
+}
+
+.qbr-review-badge--type {
+  background: #e8eaf5;
+  color: var(--yuno-gray);
+}
+
+.qbr-review-badge--status {
+  margin-left: auto;
+}
+
+.qbr-review-badge--status-pending {
+  background: #f5f5f5;
+  color: var(--yuno-gray);
+}
+
+.qbr-review-badge--status-approved {
+  background: #f0fdf4;
+  color: #15803d;
+}
+
+.qbr-review-badge--status-anonymized {
+  background: #fffbeb;
+  color: #ca8a04;
+}
+
+.qbr-review-field {
+  font-size: 11px;
+  color: var(--yuno-gray);
+  margin-bottom: 6px;
+  font-family: ui-monospace, monospace;
+}
+
+.qbr-review-tlabel {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--yuno-gray);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 6px;
+}
+
+.qbr-review-tlabel--after {
+  margin-top: 12px;
+}
+
+.qbr-review-original-box {
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 10px 12px;
+  background: #fafafa;
+  border-radius: 6px;
+  border: 1px solid var(--yuno-border);
+}
+
+.qbr-review-anon-box {
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 10px 12px;
+  background: #f0fff4;
+  border-radius: 6px;
+  border: 1px solid #bbf7d0;
+}
+
+.qbr-review-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.qbr-review-btn-approve {
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: 2px solid #3e4fe0;
+  background: #fff;
+  color: #3e4fe0;
+  font-weight: 700;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.qbr-review-btn-approve:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.qbr-review-btn-anon {
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: none;
+  background: #e0a020;
+  color: #fff;
+  font-weight: 700;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.qbr-review-btn-anon:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.qbr-review-footer {
+  position: sticky;
+  bottom: 0;
+  padding: 14px 20px 18px;
+  background: #fff;
+  border-top: 1px solid var(--yuno-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.qbr-review-footer-count {
+  font-size: 13px;
+  color: var(--yuno-gray);
 }
 
 .qbr-btn-pdf {
