@@ -357,9 +357,11 @@ function extractKpisFromMarkdown(md) {
 
   const approvalMatch =
     summary.match(
-      /(aprov?a[cç][aã]o|aprova[cç][aã]o|approval|overall)\b[\s\S]{0,80}?([\\d.,]+)\s*%/i
-    ) || summary.match(/Taxa de aprovação[^\\d]{0,80}?([\\d.,]+)\s*%/i);
-  const approvalRate = approvalMatch ? normalizePctValue(parseNum(approvalMatch[2])) : NaN;
+      /(aprov?a[cç][aã]o|aprova[cç][aã]o|approval|overall)\b[\s\S]{0,80}?([\d.,]+)\s*%/i
+    ) || summary.match(/Taxa de aprovação[\s\S]{0,80}?([\d.,]+)\s*%/i);
+  const approvalRate = approvalMatch
+    ? normalizePctValue(parseNum(approvalMatch[2]))
+    : NaN;
 
   const declinedMatch =
     summary.match(
