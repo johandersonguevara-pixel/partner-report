@@ -268,11 +268,39 @@ function formatBrl(n) {
   }
 }
 
+/** 6×6 halftone dots; element at (0,0) is the first dot; rest via box-shadow */
+function halftoneBoxShadowExtraDots(
+  step = 11,
+  n = 6,
+  color = "rgba(255,255,255,0.15)"
+) {
+  const parts = [];
+  for (let r = 0; r < n; r++) {
+    for (let c = 0; c < n; c++) {
+      if (r === 0 && c === 0) continue;
+      parts.push(`${c * step}px ${r * step}px 0 ${color}`);
+    }
+  }
+  return parts.join(", ");
+}
+
+/** Alternating section backgrounds: wrap each H2 block (and leading content) */
+function wrapContentSections(markdownHtml) {
+  const s = String(markdownHtml || "").trim();
+  if (!s) return "";
+  const chunks = s.split(/(?=<h2\b[^>]*>)/i).filter((p) => p.length > 0);
+  return chunks
+    .map((chunk) => `<div class="content-section">${chunk}</div>`)
+    .join("");
+}
+
 function buildHtmlDocument(markdownHtml, partnerName, period, chartBoot) {
   const pName = escHtml(partnerName || "Partner");
   const pPeriod = escHtml(period || "—");
   const chartsHtml = buildChartsSectionHtml(chartBoot);
   const bootJson = JSON.stringify(chartBoot).replace(/</g, "\\u003c");
+  const sectionedContent = wrapContentSections(markdownHtml);
+  const halftoneShadow = halftoneBoxShadowExtraDots(11, 6);
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -291,14 +319,28 @@ function buildHtmlDocument(markdownHtml, partnerName, period, chartBoot) {
       color: #282A30;
       font-family: "Titillium Web", system-ui, sans-serif;
       font-size: 14px;
+      font-weight: 400;
       line-height: 1.55;
     }
     .page-wrap { min-height: 100vh; display: flex; flex-direction: column; }
     .header {
+      position: relative;
+      overflow: hidden;
       width: 100%;
       background: linear-gradient(135deg, #3E4FE0 0%, #1726A6 100%);
       color: #ffffff;
       padding: 28px 56px 36px;
+    }
+    .header-halftone {
+      position: absolute;
+      top: 26px;
+      right: 52px;
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.15);
+      box-shadow: ${halftoneShadow};
+      pointer-events: none;
     }
     .header-top {
       display: flex;
@@ -315,7 +357,7 @@ function buildHtmlDocument(markdownHtml, partnerName, period, chartBoot) {
     .report-label {
       font-size: 11px;
       font-weight: 600;
-      letter-spacing: 0.18em;
+      letter-spacing: 0.14em;
       text-transform: uppercase;
       color: rgba(255,255,255,0.92);
       text-align: right;
@@ -324,6 +366,7 @@ function buildHtmlDocument(markdownHtml, partnerName, period, chartBoot) {
     .header-main-title {
       font-size: 32px;
       font-weight: 700;
+      letter-spacing: -0.02em;
       line-height: 1.2;
       margin: 0 0 8px 0;
       color: #ffffff;
@@ -339,12 +382,12 @@ function buildHtmlDocument(markdownHtml, partnerName, period, chartBoot) {
       background: #ffffff;
     }
     .impact-card {
-      background: #1726A6;
+      background: #282A30;
       color: #ffffff;
       border-radius: 12px;
       padding: 24px 28px;
       margin-bottom: 28px;
-      box-shadow: 0 8px 24px rgba(23, 38, 166, 0.25);
+      box-shadow: 0 8px 24px rgba(40, 42, 48, 0.35);
     }
     .impact-card__title {
       font-size: 11px;
@@ -362,14 +405,18 @@ function buildHtmlDocument(markdownHtml, partnerName, period, chartBoot) {
       margin-bottom: 28px;
       padding: 20px 22px;
       border: 1px solid #E8EAF5;
+      border-left: 3px solid #788CFF;
       border-radius: 12px;
-      background: #fafbff;
+      background: #ffffff;
     }
     .chart-title {
+      font-family: "Titillium Web", system-ui, sans-serif;
       margin: 0 0 14px 0;
-      font-size: 15px;
-      font-weight: 700;
-      color: #1726A6;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      color: #92959B;
     }
     .chart-canvas-wrap {
       position: relative;
@@ -387,12 +434,21 @@ function buildHtmlDocument(markdownHtml, partnerName, period, chartBoot) {
     }
     .content {
       flex: 1;
-      padding: 48px 56px;
+      padding: 0 56px;
     }
-    .content :first-child { margin-top: 0; }
+    .content-section {
+      margin: 0 -56px;
+      padding: 32px 56px;
+    }
+    .content-section:first-child { padding-top: 48px; }
+    .content-section:last-child { padding-bottom: 48px; }
+    .content-section:nth-child(odd) { background: #ffffff; }
+    .content-section:nth-child(even) { background: #E8EAF5; }
+    .content-section :first-child { margin-top: 0; }
     .content h1 {
       font-size: 26px;
       font-weight: 700;
+      letter-spacing: -0.02em;
       color: #1726A6;
       margin: 0 0 20px 0;
       line-height: 1.25;
@@ -401,24 +457,19 @@ function buildHtmlDocument(markdownHtml, partnerName, period, chartBoot) {
       position: relative;
       font-size: 18px;
       font-weight: 700;
+      letter-spacing: -0.02em;
       color: #282A30;
       margin: 36px 0 14px 0;
-      padding-bottom: 10px;
-      border-bottom: 2px solid #3E4FE0;
-    }
-    .content h2::before {
-      content: "SECTION";
-      display: block;
-      font-size: 10px;
-      font-weight: 700;
-      letter-spacing: 0.14em;
-      text-transform: uppercase;
-      color: #3E4FE0;
-      margin-bottom: 8px;
+      padding-bottom: 0;
+      padding-left: 16px;
+      border-left: 4px solid #E0ED80;
+      border-bottom: none;
     }
     .content h3 {
       font-size: 15px;
-      font-weight: 700;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
       color: #1726A6;
       margin: 24px 0 10px 0;
     }
@@ -441,7 +492,7 @@ function buildHtmlDocument(markdownHtml, partnerName, period, chartBoot) {
     }
     .content pre {
       background: #E8EAF5;
-      border: 1px solid #d8dce8;
+      border: 1px solid #E8EAF5;
       border-radius: 8px;
       padding: 14px 16px;
       overflow-x: auto;
@@ -468,11 +519,11 @@ function buildHtmlDocument(markdownHtml, partnerName, period, chartBoot) {
       font-weight: 700;
       text-align: left;
       padding: 12px 14px;
-      border: 1px solid #1726A6;
+      border: 1px solid #E8EAF5;
     }
     .content tbody td {
       padding: 10px 14px;
-      border: 1px solid #d8dce8;
+      border: 1px solid #E8EAF5;
       color: #282A30;
     }
     .content tbody tr:nth-child(even) { background: #E8EAF5; }
@@ -484,6 +535,7 @@ function buildHtmlDocument(markdownHtml, partnerName, period, chartBoot) {
     }
     .content strong { color: #1726A6; }
     .footer {
+      position: relative;
       width: 100%;
       background: #282A30;
       color: #ffffff;
@@ -494,6 +546,20 @@ function buildHtmlDocument(markdownHtml, partnerName, period, chartBoot) {
       font-size: 13px;
       font-weight: 600;
     }
+    .footer-left {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+    }
+    .footer-halftone {
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.15);
+      box-shadow: ${halftoneShadow};
+      flex-shrink: 0;
+    }
+    .footer span { color: #ffffff; }
     .footer a { color: #E0ED80; text-decoration: none; }
     .secondary { color: #92959B; font-size: 12px; }
   </style>
@@ -501,6 +567,7 @@ function buildHtmlDocument(markdownHtml, partnerName, period, chartBoot) {
 <body>
   <div class="page-wrap">
     <header class="header">
+      <div class="header-halftone" aria-hidden="true"></div>
       <div class="header-top">
         <div class="wordmark">yuno</div>
         <div class="report-label">Partner Performance Report</div>
@@ -510,10 +577,13 @@ function buildHtmlDocument(markdownHtml, partnerName, period, chartBoot) {
     </header>
     ${chartsHtml}
     <main class="content">
-      ${markdownHtml}
+      ${sectionedContent}
     </main>
     <footer class="footer">
-      <span>yuno</span>
+      <div class="footer-left">
+        <div class="footer-halftone" aria-hidden="true"></div>
+        <span>yuno</span>
+      </div>
       <a href="https://www.y.uno">www.y.uno</a>
     </footer>
   </div>
@@ -527,11 +597,18 @@ function buildHtmlDocument(markdownHtml, partnerName, period, chartBoot) {
     var boot = ${bootJson};
     if (typeof Chart !== "undefined") {
     var yunoBlue = "#3E4FE0";
-    var yunoBlueFill = "rgba(62, 79, 224, 0.2)";
-    var coral = "#D85A30";
+    var yunoBlueFill = "rgba(62, 79, 224, 0.15)";
+    var unityBlack = "#282A30";
     var innovation = "#E0ED80";
-    var gray = "#92959B";
+    var securityGray = "#92959B";
+    var lightBlue = "#788CFF";
     var benchmark = 70;
+    var chartFont = {
+      family: "'Titillium Web', system-ui, sans-serif",
+      size: 11,
+      weight: "600",
+    };
+    var axisTicks = { color: "#282A30", font: chartFont };
 
     if (boot.monthly && boot.monthly.months && boot.monthly.months.length >= 2) {
       var el = document.getElementById("chartTpv");
@@ -555,10 +632,12 @@ function buildHtmlDocument(markdownHtml, partnerName, period, chartBoot) {
           options: {
             responsive: true,
             maintainAspectRatio: false,
-            plugins: { legend: { display: true } },
+            plugins: {
+              legend: { display: true, labels: { font: chartFont } },
+            },
             scales: {
-              y: { beginAtZero: true, ticks: { color: "#282A30" } },
-              x: { ticks: { color: "#282A30" } },
+              y: { beginAtZero: true, ticks: axisTicks },
+              x: { ticks: axisTicks },
             },
           },
         });
@@ -568,7 +647,9 @@ function buildHtmlDocument(markdownHtml, partnerName, period, chartBoot) {
       if (el2) {
         var rates = boot.monthly.approvalPct;
         var barColors = rates.map(function (v) {
-          return v < benchmark ? coral : yunoBlue;
+          if (v < 60) return unityBlack;
+          if (v > benchmark) return innovation;
+          return yunoBlue;
         });
         new Chart(el2, {
           type: "bar",
@@ -588,7 +669,7 @@ function buildHtmlDocument(markdownHtml, partnerName, period, chartBoot) {
                 data: rates.map(function () {
                   return benchmark;
                 }),
-                borderColor: "#dc2626",
+                borderColor: innovation,
                 borderDash: [6, 6],
                 borderWidth: 2,
                 pointRadius: 0,
@@ -600,14 +681,16 @@ function buildHtmlDocument(markdownHtml, partnerName, period, chartBoot) {
           options: {
             responsive: true,
             maintainAspectRatio: false,
-            plugins: { legend: { display: true } },
+            plugins: {
+              legend: { display: true, labels: { font: chartFont } },
+            },
             scales: {
               y: {
                 beginAtZero: true,
                 max: 100,
-                ticks: { color: "#282A30" },
+                ticks: axisTicks,
               },
-              x: { ticks: { color: "#282A30" } },
+              x: { ticks: axisTicks },
             },
           },
         });
@@ -618,9 +701,9 @@ function buildHtmlDocument(markdownHtml, partnerName, period, chartBoot) {
       var el3 = document.getElementById("chartDeclines");
       if (el3) {
         var bg = boot.declines.tones.map(function (t) {
-          if (t === "soft") return innovation;
-          if (t === "hard") return coral;
-          return gray;
+          if (t === "soft") return lightBlue;
+          if (t === "hard") return unityBlack;
+          return securityGray;
         });
         new Chart(el3, {
           type: "bar",
@@ -641,8 +724,8 @@ function buildHtmlDocument(markdownHtml, partnerName, period, chartBoot) {
             maintainAspectRatio: false,
             plugins: { legend: { display: false } },
             scales: {
-              x: { beginAtZero: true, ticks: { color: "#282A30" } },
-              y: { ticks: { color: "#282A30" } },
+              x: { beginAtZero: true, ticks: axisTicks },
+              y: { ticks: axisTicks },
             },
           },
         });
