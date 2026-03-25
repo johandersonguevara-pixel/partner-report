@@ -325,6 +325,99 @@ function extractChartDataFromMarkdown(md) {
   return { monthly, declines, impact };
 }
 
+function extractKpisFromMarkdown(md) {
+  const text = String(md || "");
+  const summaryMatch =
+    text.match(/##\s*1\.[\s\S]*?(?=##\s*2\.)/i) ||
+    text.match(/##\s*1\.[\s\S]*/i);
+  const summary = summaryMatch ? summaryMatch[0] : text;
+
+  function toMoneyFromMB(match) {
+    // match groups: [_, number, suffix]
+    if (!match) return NaN;
+    const num = parseNum(match[1]);
+    const suf = String(match[2] || "").toUpperCase();
+    if (!Number.isFinite(num)) return NaN;
+    if (suf === "B") return num * 1e9;
+    return num * 1e6; // "M"
+  }
+
+  const tpvM =
+    summary.match(/TPV[\s\S]{0,120}?R\$\s*([\d.,]+)\s*([MB])\b/i) ||
+    summary.match(/Total TPV[\s\S]{0,120}?R\$\s*([\d.,]+)\s*([MB])\b/i) ||
+    summary.match(/R\$\s*([\d.,]+)\s*([MB])\b/i);
+
+  const totalTpvBrl = toMoneyFromMB(tpvM);
+
+  const txMatch =
+    summary.match(
+      /([\d.,]+)\s*(?:transa(?:ç|c)ões|transactions|transacciones|txns|txns\.?)\b/i
+    ) || summary.match(/Total\s+Transa(?:ç|c)ões?\s*[:\-]?\s*([\d.,]+)/i);
+  const totalTxns = txMatch ? parseNum(txMatch[1]) : NaN;
+
+  const approvalMatch =
+    summary.match(
+      /(aprov?a[cç][aã]o|aprova[cç][aã]o|approval|overall)\b[\s\S]{0,80}?([\\d.,]+)\s*%/i
+    ) || summary.match(/Taxa de aprovação[^\\d]{0,80}?([\\d.,]+)\s*%/i);
+  const approvalRate = approvalMatch ? normalizePctValue(parseNum(approvalMatch[2])) : NaN;
+
+  const declinedMatch =
+    summary.match(
+      /(volume\s+recusad[oa]|declined\s+volume|volume\s+perdido)[\s\S]{0,120}?R\$\s*([\d.,]+)\s*([MB])\b/i
+    ) ||
+    summary.match(/recusad[oa][\s\S]{0,120}?R\$\s*([\d.,]+)\s*([MB])\b/i);
+  const declinedBrl = declinedMatch ? toMoneyFromMB(declinedMatch) : NaN;
+
+  return {
+    totalTpvBrl,
+    totalTxns,
+    approvalRate,
+    declinedBrl,
+  };
+}
+
+function formatIntPtBr(n) {
+  if (!Number.isFinite(n)) return "—";
+  return Math.round(n).toLocaleString("pt-BR");
+}
+
+function formatApprovalPtBrPct(n) {
+  if (!Number.isFinite(n)) return "—";
+  const v = Number(n);
+  const fmt = v.toLocaleString("pt-BR", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 1,
+  });
+  return `${fmt}%`;
+}
+
+function buildKpiCardsHtml(kpis) {
+  const totalTpv = formatBrlMillions(kpis?.totalTpvBrl);
+  const totalTxns = formatIntPtBr(kpis?.totalTxns);
+  const approval = formatApprovalPtBrPct(kpis?.approvalRate);
+  const declined = formatBrlMillions(kpis?.declinedBrl);
+
+  return `
+  <div class="kpi-row" style="page-break-inside: avoid;">
+    <div class="kpi-card">
+      <div class="kpi-label">Total TPV</div>
+      <div class="kpi-value">${escHtml(totalTpv)}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Total transações</div>
+      <div class="kpi-value">${escHtml(totalTxns)}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Taxa de aprovação geral</div>
+      <div class="kpi-value">${escHtml(approval)}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Volume recusado estimado</div>
+      <div class="kpi-value">${escHtml(declined)}</div>
+    </div>
+  </div>`;
+}
+
 function buildChartsSectionHtml(boot) {
   const hasAny =
     boot.impact ||
@@ -341,7 +434,7 @@ function buildChartsSectionHtml(boot) {
     const code = escHtml(stripMarkdown(boot.impact.topCode || "—"));
     html += `
     <div class="impact-card" style="page-break-inside: avoid;">
-      <div class="impact-card__title">Impacto financeiro (estimado)</div>
+      <div class="impact-card__title">IMPACTO FINANCEIRO ESTIMADO</div>
       <div class="impact-card__metric">Volume recusado (soma da tabela de rejeições)</div>
       <div class="impact-card__value">${escHtml(total)}</div>
       <div class="impact-card__sub">Maior oportunidade de recuperação</div>
@@ -395,12 +488,13 @@ function formatBrl(n) {
 /** Impact card: express BRL in millions, pt-BR grouping/decimals */
 function formatBrlMillions(n) {
   if (!Number.isFinite(n) || n <= 0) return "—";
-  const mi = n / 1e6;
-  const fmt = mi.toLocaleString("pt-BR", {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 2,
+  if (n <= 1e6) return formatBrl(n);
+  const m = n / 1e6;
+  const fmt = m.toLocaleString("pt-BR", {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
   });
-  return `R$ ${fmt} mi`;
+  return `R$ ${fmt}M`;
 }
 
 /** 6×6 halftone dots; element at (0,0) is the first dot; rest via box-shadow */
@@ -429,10 +523,11 @@ function wrapContentSections(markdownHtml) {
     .join("");
 }
 
-function buildHtmlDocument(markdownHtml, partnerName, period, chartBoot) {
+function buildHtmlDocument(markdownHtml, partnerName, period, chartBoot, rawMarkdown) {
   const pName = escHtml(partnerName || "Partner");
   const pPeriod = escHtml(period || "—");
   const chartsHtml = buildChartsSectionHtml(chartBoot);
+  const kpiCardsHtml = buildKpiCardsHtml(extractKpisFromMarkdown(rawMarkdown));
   const bootJson = JSON.stringify(chartBoot).replace(/</g, "\\u003c");
   const sectionedContent = wrapContentSections(markdownHtml);
   const halftoneShadow = halftoneBoxShadowExtraDots(11, 6);
@@ -516,6 +611,33 @@ function buildHtmlDocument(markdownHtml, partnerName, period, chartBoot) {
       padding: 32px 56px 8px;
       background: #ffffff;
     }
+    .kpi-row {
+      display: flex;
+      gap: 16px;
+      padding: 24px 56px 0;
+      background: #ffffff;
+    }
+    .kpi-card {
+      flex: 1;
+      background: #E8EAF5;
+      border-radius: 12px;
+      padding: 18px 18px;
+      page-break-inside: avoid;
+    }
+    .kpi-label {
+      color: #92959B;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      font-size: 11px;
+    }
+    .kpi-value {
+      margin-top: 10px;
+      color: #1726A6;
+      font-weight: 700;
+      font-size: 22px;
+      line-height: 1.2;
+    }
     .impact-card {
       background: #282A30;
       color: #ffffff;
@@ -533,7 +655,7 @@ function buildHtmlDocument(markdownHtml, partnerName, period, chartBoot) {
       margin-bottom: 12px;
     }
     .impact-card__metric { font-size: 13px; opacity: 0.9; margin-bottom: 4px; }
-    .impact-card__value { font-size: 28px; font-weight: 700; margin-bottom: 16px; }
+    .impact-card__value { font-size: 32px; font-weight: 700; margin-bottom: 16px; color: #ffffff; }
     .impact-card__sub { font-size: 12px; opacity: 0.85; margin-bottom: 4px; }
     .impact-card__opp { font-size: 15px; font-weight: 600; }
     .chart-block {
@@ -646,7 +768,7 @@ function buildHtmlDocument(markdownHtml, partnerName, period, chartBoot) {
       width: 100%;
       border-collapse: collapse;
       margin: 18px 0;
-      font-size: 13px;
+      font-size: 12px;
     }
     .content thead th {
       background: #3E4FE0;
@@ -654,11 +776,13 @@ function buildHtmlDocument(markdownHtml, partnerName, period, chartBoot) {
       font-weight: 700;
       text-align: left;
       padding: 12px 14px;
-      border: 1px solid #E8EAF5;
+      border: none;
+      border-bottom: 1px solid #E8EAF5;
     }
     .content tbody td {
       padding: 10px 14px;
-      border: 1px solid #E8EAF5;
+      border: none;
+      border-bottom: 1px solid #E8EAF5;
       color: #282A30;
     }
     .content tbody tr:nth-child(even) { background: #E8EAF5; }
@@ -710,6 +834,7 @@ function buildHtmlDocument(markdownHtml, partnerName, period, chartBoot) {
       <h1 class="header-main-title">${pName}</h1>
       <p class="header-period">${pPeriod}</p>
     </header>
+    ${kpiCardsHtml}
     ${chartsHtml}
     <main class="content">
       ${sectionedContent}
@@ -746,102 +871,132 @@ function buildHtmlDocument(markdownHtml, partnerName, period, chartBoot) {
     var axisTicks = { color: "#282A30", font: chartFont };
 
     if (boot.monthly && boot.monthly.months && boot.monthly.months.length >= 2) {
-      var el = document.getElementById("chartTpv");
-      if (el) {
-        new Chart(el, {
-          type: "line",
-          data: {
-            labels: boot.monthly.months,
-            datasets: [
-              {
-                label: "TPV (BRL)",
-                data: boot.monthly.tpv.map(function (x) {
-                  var n = parseFloat(x);
-                  return isFinite(n) ? n : 0;
-                }),
-                borderColor: yunoBlue,
-                backgroundColor: yunoBlueFill,
-                fill: true,
-                tension: 0.25,
-                borderWidth: 2,
-              },
-            ],
-          },
-          options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-              legend: { display: true, labels: { font: chartFont } },
-            },
-            scales: {
-              y: { beginAtZero: true, ticks: axisTicks },
-              x: { ticks: axisTicks },
-            },
-          },
-        });
+      function isMonthKey(v) {
+        return /^\\d{4}-\\d{2}$/.test(String(v || \"\").trim());
       }
 
-      var el2 = document.getElementById("chartApproval");
-      if (el2) {
-        var rates = boot.monthly.approvalPct.map(function (x) {
-          var n = parseFloat(x);
-          if (!isFinite(n)) return 0;
-          if (n > 0 && n <= 1) n = n * 100;
-          return Math.min(100, Math.max(0, n));
-        });
-        var barColors = rates.map(function (v) {
-          if (v < 60) return unityBlack;
-          if (v > benchmark) return innovation;
-          return yunoBlue;
-        });
-        new Chart(el2, {
-          type: "bar",
-          data: {
-            labels: boot.monthly.months,
-            datasets: [
-              {
-                type: "bar",
-                label: "Approval rate %",
-                data: rates,
-                backgroundColor: barColors,
-                borderWidth: 0,
-                order: 2,
-                yAxisID: "y",
-              },
-              {
-                type: "line",
-                label: "Benchmark 70%",
-                data: rates.map(function () {
-                  return benchmark;
-                }),
-                borderColor: innovation,
-                borderDash: [6, 6],
-                borderWidth: 2,
-                pointRadius: 0,
-                fill: false,
-                order: 1,
-                yAxisID: "y",
-              },
-            ],
-          },
-          options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-              legend: { display: true, labels: { font: chartFont } },
+      var monthsAll = boot.monthly.months || [];
+      var tpvAll = boot.monthly.tpv || [];
+      var ratesAll = boot.monthly.approvalPct || [];
+
+      // Remove rows like TOTAL: only keep YYYY-MM keys
+      var months = [];
+      var tpv = [];
+      var rates = [];
+      for (var i = 0; i < monthsAll.length; i++) {
+        var m = String(monthsAll[i] || \"\").trim();
+        if (!isMonthKey(m)) continue;
+        months.push(m);
+
+        var tv = parseFloat(tpvAll[i]);
+        tpv.push(isFinite(tv) ? tv : 0);
+
+        var rv = parseFloat(ratesAll[i]);
+        if (!isFinite(rv)) rv = 0;
+        if (rv > 0 && rv <= 1) rv = rv * 100;
+        rv = Math.min(100, Math.max(0, rv));
+        rates.push(rv);
+      }
+
+      if (months.length >= 2) {
+        var el = document.getElementById("chartTpv");
+        if (el) {
+          new Chart(el, {
+            type: "line",
+            data: {
+              labels: months,
+              datasets: [
+                {
+                  label: "TPV (BRL)",
+                  data: tpv,
+                  borderColor: yunoBlue,
+                  backgroundColor: yunoBlueFill,
+                  fill: true,
+                  tension: 0.25,
+                  borderWidth: 2,
+                },
+              ],
             },
-            scales: {
-              y: {
-                type: "linear",
-                min: 0,
-                max: 100,
-                beginAtZero: true,
-                ticks: axisTicks,
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: {
+                legend: { display: true, labels: { font: chartFont } },
               },
-              x: { ticks: axisTicks },
+              scales: {
+                y: { beginAtZero: true, ticks: axisTicks },
+                x: { ticks: axisTicks },
+              },
             },
-          },
-        });
+          });
+        }
+
+        var el2 = document.getElementById("chartApproval");
+        if (el2) {
+          // Above 70% => Yuno Blue, below 70% => Security Gray
+          var barColors = rates.map(function (v) {
+            return v > benchmark ? yunoBlue : securityGray;
+          });
+
+          new Chart(el2, {
+            type: "bar",
+            data: {
+              labels: months,
+              datasets: [
+                {
+                  type: "bar",
+                  label: "Approval rate %",
+                  data: rates,
+                  backgroundColor: barColors,
+                  borderWidth: 0,
+                  order: 2,
+                  yAxisID: "y",
+                },
+                {
+                  type: "line",
+                  label: "Benchmark 70%",
+                  data: rates.map(function () {
+                    return benchmark;
+                  }),
+                  borderColor: innovation,
+                  borderDash: [6, 6],
+                  borderWidth: 2,
+                  pointRadius: 0,
+                  fill: false,
+                  order: 1,
+                  yAxisID: "y",
+                },
+              ],
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: {
+                legend: { display: true, labels: { font: chartFont } },
+              },
+              scales: {
+                y: {
+                  type: "linear",
+                  min: 0,
+                  max: 100,
+                  beginAtZero: true,
+                  ticks: axisTicks,
+                  grid: {
+                    color: function (ctx) {
+                      return ctx.tick && ctx.tick.value === benchmark
+                        ? innovation
+                        : "rgba(146,149,155,0.25)";
+                    },
+                    lineWidth: function (ctx) {
+                      return ctx.tick && ctx.tick.value === benchmark ? 2 : 1;
+                    },
+                  },
+                },
+                x: { ticks: axisTicks },
+              },
+            },
+          });
+        }
       }
     }
 
@@ -906,7 +1061,7 @@ export async function markdownToPdfBuffer(text, options = {}) {
   const md = String(text || "");
   const markdownHtml = marked.parse(md);
   const chartBoot = extractChartDataFromMarkdown(md);
-  const html = buildHtmlDocument(markdownHtml, partnerName, period, chartBoot);
+  const html = buildHtmlDocument(markdownHtml, partnerName, period, chartBoot, md);
 
   const browser = await puppeteer.launch({
     headless: true,
