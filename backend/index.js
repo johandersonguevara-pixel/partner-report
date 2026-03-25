@@ -26,7 +26,10 @@ app.use("/api/history", historyRouter);
 
 app.use((err, _req, res, _next) => {
   console.error(err);
-  const status = err.statusCode || 500;
+  let status = err.statusCode || 500;
+  if (err.name === "MulterError") {
+    status = err.code === "LIMIT_FILE_SIZE" ? 413 : 400;
+  }
   res.status(status).json({
     error: err.message || "Internal server error",
   });

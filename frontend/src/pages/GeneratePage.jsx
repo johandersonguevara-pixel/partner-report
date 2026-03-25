@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { fetchJson, apiPath } from '../api.js'
+import { fetchJson, generateReport } from '../api.js'
 
 const FALLBACK_PARTNERS = [
   { id: 'mercadopago-br', name: 'Mercado Pago', region: 'Brasil', tier: 'Strategic' },
@@ -131,10 +131,12 @@ export default function GeneratePage({ user, onGenerated }) {
   const [partners, setPartners] = useState([])
   const [partner, setPartner]   = useState('')
   const [quarter, setQuarter]   = useState('')
+  const [pdfFile, setPdfFile]   = useState(null)
   const [status, setStatus]     = useState('idle')
   const [currentStep, setStep]  = useState(-1)
   const [result, setResult]     = useState(null)
   const [error, setError]       = useState('')
+  const fileInputRef            = useRef(null)
 
   useEffect(() => {
     let cancelled = false
@@ -165,15 +167,16 @@ export default function GeneratePage({ user, onGenerated }) {
     }, 1800)
 
     try {
-      const res = await fetch(apiPath('/api/generate'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const res = await generateReport(
+        {
           partnerId: sel.id,
+          partnerName: sel.name,
           period: quarter,
-          includePdf: true,
-        }),
-      })
+          region: sel.region,
+          generatedBy: user.name,
+        },
+        pdfFile || undefined
+      )
       clearInterval(interval)
       const ct = (res.headers.get('content-type') || '').toLowerCase()
 
@@ -259,7 +262,39 @@ export default function GeneratePage({ user, onGenerated }) {
     }
   }
 
-  function reset() { setStatus('idle'); setStep(-1); setResult(null); setError(''); setPartner(''); setQuarter('') }
+  function onPdfPick(e) {
+    const f = e.target.files?.[0]
+    if (!f) {
+      setPdfFile(null)
+      return
+    }
+    const ok =
+      f.type === 'application/pdf' ||
+      (f.name || '').toLowerCase().endsWith('.pdf')
+    if (!ok) {
+      setError('Apenas ficheiros PDF são aceites.')
+      e.target.value = ''
+      setPdfFile(null)
+      return
+    }
+    setError('')
+    setPdfFile(f)
+  }
+
+  function clearPdf() {
+    setPdfFile(null)
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
+  function reset() {
+    setStatus('idle')
+    setStep(-1)
+    setResult(null)
+    setError('')
+    setPartner('')
+    setQuarter('')
+    clearPdf()
+  }
 
   const labelStyle = { display:'block', fontSize:10, fontWeight:600, textTransform:'uppercase', letterSpacing:1.5, color:B.grayDark, marginBottom:6 }
   const selectStyle = (v) => ({ width:'100%', padding:'9px 12px', marginBottom:16, background:'#F5F6FA', border:`1px solid ${v?B.blue:'#E8EAF5'}`, borderRadius:8, fontSize:13, color:B.black, fontFamily:'inherit', outline:'none' })
@@ -270,7 +305,7 @@ export default function GeneratePage({ user, onGenerated }) {
         <div style={{ fontSize:22, fontWeight:400, color:B.black, marginBottom:4 }}>
           Olá, <strong>{user.name.split(' ')[0]}</strong> 👋
         </div>
-        <div style={{ fontSize:13, color:B.gray }}>Selecione um parceiro e quarter para gerar o Partner Performance Report.</div>
+        <div style={{ fontSize:13, color:B.gray }}>Selecione parceiro e quarter. Opcionalmente envie um PDF com dados para o QBR.</div>
       </div>
 
       <div style={{ display:'grid', gridTemplateColumns:'320px 1fr', gap:24, alignItems:'start' }}>
@@ -301,8 +336,55 @@ export default function GeneratePage({ user, onGenerated }) {
               {QUARTERS.map(q => <option key={q}>{q}</option>)}
             </select>
 
+            <label style={labelStyle}>Dados (opcional)</label>
+            <div style={{ marginBottom:16, fontSize:12, color:B.gray, lineHeight:1.5 }}>
+              Envie um PDF com tabelas/dados para a IA usar como fonte. Se não enviar, usamos os dados do Metabase (ou exemplo).
+            </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".pdf,application/pdf"
+              onChange={onPdfPick}
+              disabled={status === 'loading'}
+              style={{ display:'none' }}
+              id="qbr-pdf-upload"
+            />
+            <div style={{ display:'flex', flexWrap:'wrap', alignItems:'center', gap:8, marginBottom:16 }}>
+              <label
+                htmlFor="qbr-pdf-upload"
+                style={{
+                  padding:'8px 14px',
+                  borderRadius:8,
+                  border:`1px solid ${B.blueLight}`,
+                  background:'#F5F6FA',
+                  fontSize:12,
+                  fontWeight:600,
+                  color:B.blueDark,
+                  cursor: status === 'loading' ? 'not-allowed' : 'pointer',
+                  opacity: status === 'loading' ? 0.6 : 1,
+                }}
+              >
+                Escolher PDF…
+              </label>
+              {pdfFile ? (
+                <span style={{ fontSize:12, color:B.black, flex:1, minWidth:0, wordBreak:'break-all' }}>
+                  <strong>{pdfFile.name}</strong>
+                  <button
+                    type="button"
+                    onClick={clearPdf}
+                    disabled={status === 'loading'}
+                    style={{ marginLeft:8, padding:'2px 8px', fontSize:11, borderRadius:6, border:'1px solid #fecaca', background:'#fef2f2', color:'#dc2626', cursor:'pointer', fontFamily:'inherit' }}
+                  >
+                    Remover
+                  </button>
+                </span>
+              ) : (
+                <span style={{ fontSize:12, color:B.gray }}>Nenhum ficheiro selecionado</span>
+              )}
+            </div>
+
             <button onClick={handleGenerate} disabled={!can} style={{ width:'100%', padding:11, borderRadius:8, border:'none', cursor:can?'pointer':'not-allowed', background:can?`linear-gradient(135deg,${B.blue},${B.blueDark})`:'#E8EAF5', color:can?B.white:B.gray, fontSize:13, fontWeight:700, fontFamily:'inherit', transition:'all .2s' }}>
-              {status==='loading' ? '⏳ Gerando...' : '📋 Gerar Documento QBR'}
+              {status==='loading' ? '⏳ Analisando dados e gerando QBR...' : '📋 Gerar Documento QBR'}
             </button>
 
             {status==='error' && <div style={{ marginTop:12, padding:'10px 12px', background:'#fef2f2', border:'1px solid #fecaca', borderRadius:8, fontSize:12, color:'#dc2626' }}>❌ {error}</div>}
@@ -325,7 +407,9 @@ export default function GeneratePage({ user, onGenerated }) {
 
           {status==='loading' && (
             <div style={{ background:B.white, borderRadius:12, border:'1px solid #E8EAF5', padding:28 }}>
-              <div style={{ fontSize:13, fontWeight:600, color:B.black, marginBottom:20 }}>🤖 Processando com IA...</div>
+              <div style={{ fontSize:15, fontWeight:700, color:B.blueDark, marginBottom:8 }}>Analisando dados e gerando QBR…</div>
+              <div style={{ fontSize:12, color:B.gray, marginBottom:20 }}>Isto pode levar um minuto. Não feches esta página.</div>
+              <div style={{ fontSize:13, fontWeight:600, color:B.black, marginBottom:20 }}>🤖 Etapas</div>
               {STEPS.map((s,i) => {
                 const isDone=i<currentStep, isActive=i===currentStep, isPending=i>currentStep
                 return (
@@ -374,6 +458,11 @@ export default function GeneratePage({ user, onGenerated }) {
             <div style={{ background:'#fef2f2', borderRadius:12, border:'1px solid #fecaca', padding:32, textAlign:'center' }}>
               <div style={{ fontSize:32, marginBottom:12 }}>⚠️</div>
               <div style={{ fontSize:14, fontWeight:600, color:'#991b1b', marginBottom:8 }}>Erro ao gerar o documento</div>
+              {error ? (
+                <div style={{ fontSize:13, color:'#7f1d1d', marginBottom:16, lineHeight:1.55, textAlign:'left', maxWidth:480, marginLeft:'auto', marginRight:'auto', padding:'10px 12px', background:'#fff7f7', borderRadius:8, border:'1px solid #fecaca' }}>
+                  {error}
+                </div>
+              ) : null}
               <button onClick={reset} style={{ padding:'9px 20px', background:'#dc2626', color:'white', border:'none', borderRadius:8, fontSize:12, fontWeight:700, cursor:'pointer', fontFamily:'inherit' }}>Tentar novamente</button>
             </div>
           )}

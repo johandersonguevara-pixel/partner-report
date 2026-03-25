@@ -1,34 +1,82 @@
+import { createRequire } from "node:module";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
+import multer from "multer";
 import { v4 as uuidv4 } from "uuid";
 import { generateReportMarkdown } from "../services/claude.js";
 import { fetchPartnerMetrics } from "../services/metabase.js";
 import { markdownToPdfBuffer } from "../services/pdf.js";
 import { appendHistory } from "./history.js";
 
+const require = createRequire(import.meta.url);
+const pdfParse = require("pdf-parse");
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const partnersPath = path.join(__dirname, "..", "data", "partners.json");
 
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 25 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const name = (file.originalname || "").toLowerCase();
+    const mt = file.mimetype || "";
+    if (mt === "application/pdf" || name.endsWith(".pdf")) {
+      return cb(null, true);
+    }
+    const err = new Error("Invalid file type. Upload a PDF.");
+    err.statusCode = 400;
+    cb(err);
+  },
+});
+
 export const generateRouter = express.Router();
 
-generateRouter.post("/", async (req, res, next) => {
+function conditionalUpload(req, res, next) {
+  const ct = (req.headers["content-type"] || "").toLowerCase();
+  if (ct.includes("multipart/form-data")) {
+    return upload.single("file")(req, res, (err) => {
+      if (err) return next(err);
+      next();
+    });
+  }
+  next();
+}
+
+async function extractPdfText(buffer) {
+  if (!buffer?.length) return "";
   try {
-    // Aceita tanto o formato do Cursor como o nosso
-    const partnerId   = req.body.partnerId   || req.body.partner_id;
-    const period      = req.body.period      || req.body.quarter;
+    const data = await pdfParse(buffer);
+    return typeof data.text === "string" ? data.text.trim() : "";
+  } catch (e) {
+    console.error("PDF parse error:", e);
+    const err = new Error(
+      e?.message?.includes("password") || e?.message?.includes("encrypted")
+        ? "PDF is encrypted or password-protected"
+        : "Failed to extract text from PDF"
+    );
+    err.statusCode = 400;
+    throw err;
+  }
+}
+
+generateRouter.post("/", conditionalUpload, async (req, res, next) => {
+  try {
+    const partnerId =
+      req.body.partnerId || req.body.partner_id;
+    const period = req.body.period || req.body.quarter;
     const partnerName = req.body.partnerName || req.body.partner_name;
-    const region      = req.body.region      || "";
-    const generatedBy = req.body.generatedBy || req.body.generated_by || "";
-    const start       = req.body.start;
-    const end         = req.body.end;
+    const region = req.body.region || "";
+    const generatedBy =
+      req.body.generatedBy || req.body.generated_by || "";
+    const start = req.body.start;
+    const end = req.body.end;
 
     if (!partnerId) {
       return res.status(400).json({ error: "partnerId is required" });
     }
 
-    // Tenta carregar partners do ficheiro, senão usa lista hardcoded
     let partner;
     try {
       const raw = await readFile(partnersPath, "utf8");
@@ -36,12 +84,12 @@ generateRouter.post("/", async (req, res, next) => {
       partner = partners.find((p) => p.id === partnerId);
     } catch {
       const PARTNERS = [
-        { id: "mercadopago-br",   name: "Mercado Pago",     region: "Brasil" },
-        { id: "getnet-br",        name: "Getnet",           region: "Brasil" },
-        { id: "cielo-br",         name: "Cielo",            region: "Brasil" },
-        { id: "clearsale-br",     name: "ClearSale",        region: "Brasil" },
+        { id: "mercadopago-br", name: "Mercado Pago", region: "Brasil" },
+        { id: "getnet-br", name: "Getnet", region: "Brasil" },
+        { id: "cielo-br", name: "Cielo", region: "Brasil" },
+        { id: "clearsale-br", name: "ClearSale", region: "Brasil" },
         { id: "paypal-braintree", name: "PayPal-Braintree", region: "Global" },
-        { id: "picpay-br",        name: "PicPay",           region: "Brasil" },
+        { id: "picpay-br", name: "PicPay", region: "Brasil" },
       ];
       partner = PARTNERS.find((p) => p.id === partnerId);
     }
@@ -51,16 +99,34 @@ generateRouter.post("/", async (req, res, next) => {
     }
 
     const periodLabel = period || "Current period";
-    const name        = partnerName || partner.name;
+    const name = partnerName || partner.name;
 
-    console.log(`📊 Fetching metrics: ${name} | ${periodLabel}`);
-    const metricsBundle = await fetchPartnerMetrics(partnerId, { start, end });
+    const file = req.file;
+    const hasPdfUpload = Boolean(file?.buffer?.length);
+
+    let rawDataText = "";
+    let metricsBundle = {};
+
+    if (hasPdfUpload) {
+      console.log(`📄 Extracting text from uploaded PDF (${file.size} bytes)`);
+      rawDataText = await extractPdfText(file.buffer);
+      if (!rawDataText) {
+        return res.status(400).json({
+          error:
+            "No text could be extracted from the PDF (empty or image-only document)",
+        });
+      }
+    } else {
+      console.log(`📊 Fetching metrics: ${name} | ${periodLabel}`);
+      metricsBundle = await fetchPartnerMetrics(partnerId, { start, end });
+    }
 
     console.log(`🧠 Generating report with Claude...`);
     const reportMarkdown = await generateReportMarkdown({
       partnerId,
       partnerName: name,
       period: periodLabel,
+      rawDataText,
       metrics: metricsBundle,
     });
 
@@ -70,7 +136,6 @@ generateRouter.post("/", async (req, res, next) => {
       period: periodLabel,
     });
 
-    // Guardar no histórico
     const id = uuidv4();
     const entry = {
       id,
@@ -84,6 +149,7 @@ generateRouter.post("/", async (req, res, next) => {
       filename: `Yuno_PartnerReport_${name.replace(/\s/g, "_")}_${periodLabel.replace(/\s/g, "_")}.pdf`,
       generated_at: new Date().toLocaleString("pt-BR"),
       createdAt: new Date().toISOString(),
+      dataSource: hasPdfUpload ? "pdf_upload" : metricsBundle.source || "metabase_or_sample",
     };
 
     try {

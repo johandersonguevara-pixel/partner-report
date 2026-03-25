@@ -34,3 +34,53 @@ export async function fetchJson(path, options = {}) {
   }
   return data;
 }
+
+/**
+ * POST /api/generate — PDF na resposta (application/pdf) ou JSON legado.
+ * Com `pdfFile`: multipart/form-data (partnerId, partnerName, period, region, generatedBy, file).
+ * Sem arquivo: application/json (fluxo Metabase/sample).
+ *
+ * @param {{
+ *   partnerId: string
+ *   partnerName: string
+ *   period: string
+ *   region?: string
+ *   generatedBy?: string
+ *   start?: string
+ *   end?: string
+ * }} payload
+ * @param {File | null | undefined} [pdfFile]
+ * @returns {Promise<Response>}
+ */
+export async function generateReport(payload, pdfFile) {
+  const url = apiPath("/api/generate");
+
+  if (pdfFile instanceof File) {
+    const fd = new FormData();
+    fd.append("partnerId", payload.partnerId);
+    fd.append("partnerName", payload.partnerName);
+    fd.append("period", payload.period);
+    if (payload.region != null && payload.region !== "") {
+      fd.append("region", payload.region);
+    }
+    if (payload.generatedBy != null && payload.generatedBy !== "") {
+      fd.append("generatedBy", payload.generatedBy);
+    }
+    fd.append("file", pdfFile, pdfFile.name || "report.pdf");
+    return fetch(url, { method: "POST", body: fd });
+  }
+
+  return fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      partnerId: payload.partnerId,
+      partnerName: payload.partnerName,
+      period: payload.period,
+      region: payload.region,
+      generatedBy: payload.generatedBy,
+      start: payload.start,
+      end: payload.end,
+    }),
+  });
+}
