@@ -1,0 +1,90 @@
+@import url("https://fonts.googleapis.com/css2?family=Titillium+Web:wght@300;400;600;700&display=swap");
+
+.qbr-shell {
+  font-family: "Titillium Web", system-ui, sans-serif;
+  color: #282a30;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(40, 42, 48, 0.08);
+  overflow: hidden;
+  max-width: 1120px;
+  margin: 0 auto;
+}
+
+.qbr-h2 {
+  border-left: 3px solid #e0ed80;
+  padding-left: 12px;
+  font-size: 14px;
+  font-weight: 700;
+  margin: 0 0 14px;
+  color: #282a30;
+}
+
+.qbr-table-wrap {
+  overflow-x: auto;
+}
+
+.qbr-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.qbr-table thead th {
+  background: #3e4fe0;
+  color: #fff;
+  font-weight: 700;
+  text-align: left;
+  padding: 10px 12px;
+  border-bottom: 1px solid #e8eaf5;
+}
+
+.qbr-table tbody td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #f0f0f0;
+  color: #282a30;
+}
+
+.qbr-table tbody tr:nth-child(even) {
+  background: #fafafa;
+}
+
+.qbr-table tbody tr:nth-child(odd) {
+  background: #fff;
+}
+
+@media print {
+  nav,
+  .nav-bar,
+  button,
+  .filter-bar,
+  .qbr-no-print {
+    display: none !important;
+  }
+
+  .export-step {
+    display: block !important;
+    position: static !important;
+    inset: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+    box-shadow: none !important;
+  }
+
+  .tab-content {
+    display: block !important;
+  }
+
+  .qbr-shell {
+    box-shadow: none !important;
+    border-radius: 0 !important;
+  }
+
+  body {
+    background: white !important;
+  }
+
+  .cl-item:not(.selected) {
+    display: none !important;
+  }
+}

@@ -166,3 +166,33 @@ button {
   color: var(--muted);
   font-size: 0.9rem;
 }
+
+/* Print: interactive QBR export (window.print) — complements QBRReport.css */
+@media print {
+  nav,
+  .nav-bar,
+  button,
+  .filter-bar {
+    display: none !important;
+  }
+
+  .export-step {
+    display: block !important;
+  }
+
+  .tab-content {
+    display: block !important;
+  }
+
+  .qbr-shell {
+    box-shadow: none !important;
+  }
+
+  body {
+    background: white !important;
+  }
+
+  .cl-item:not(.selected) {
+    display: none !important;
+  }
+}

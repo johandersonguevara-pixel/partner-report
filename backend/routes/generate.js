@@ -5,9 +5,8 @@ import { fileURLToPath } from "node:url";
 import express from "express";
 import multer from "multer";
 import { v4 as uuidv4 } from "uuid";
-import { generateReportMarkdown } from "../services/claude.js";
+import { generateReportJSON } from "../services/claude.js";
 import { fetchPartnerMetrics } from "../services/metabase.js";
-import { markdownToPdfBuffer } from "../services/pdf.js";
 import { appendHistory } from "./history.js";
 
 const require = createRequire(import.meta.url);
@@ -121,8 +120,8 @@ generateRouter.post("/", conditionalUpload, async (req, res, next) => {
       metricsBundle = await fetchPartnerMetrics(partnerId, { start, end });
     }
 
-    console.log(`🧠 Generating report with Claude...`);
-    const reportMarkdown = await generateReportMarkdown({
+    console.log(`🧠 Generating QBR JSON with Claude...`);
+    const reportJSON = await generateReportJSON({
       partnerId,
       partnerName: name,
       period: periodLabel,
@@ -130,19 +129,7 @@ generateRouter.post("/", conditionalUpload, async (req, res, next) => {
       metrics: metricsBundle,
     });
 
-    // TEMP: remove after validating table headers against pdf.js parsers (Railway logs)
-    console.log(
-      "=== Claude reportMarkdown (temp debug) ===\n" +
-        String(reportMarkdown || "") +
-        "\n=== end reportMarkdown ==="
-    );
-
-    console.log(`📄 Generating PDF...`);
-    const pdfBuffer = await markdownToPdfBuffer(reportMarkdown, {
-      partnerName: name,
-      period: periodLabel,
-    });
-
+    const generatedAt = new Date().toISOString();
     const id = uuidv4();
     const entry = {
       id,
@@ -153,22 +140,29 @@ generateRouter.post("/", conditionalUpload, async (req, res, next) => {
       period: periodLabel,
       quarter: periodLabel,
       generated_by: generatedBy,
-      filename: `Yuno_PartnerReport_${name.replace(/\s/g, "_")}_${periodLabel.replace(/\s/g, "_")}.pdf`,
+      filename: `Yuno_QBR_${name.replace(/\s/g, "_")}_${periodLabel.replace(/\s/g, "_")}.json`,
       generated_at: new Date().toLocaleString("pt-BR"),
-      createdAt: new Date().toISOString(),
+      createdAt: generatedAt,
       dataSource: hasPdfUpload ? "pdf_upload" : metricsBundle.source || "metabase_or_sample",
     };
 
     try {
       await appendHistory(entry);
     } catch (histErr) {
-      console.error("History write failed (PDF still sent):", histErr);
+      console.error("History write failed (response still sent):", histErr);
     }
 
-    const safeName = entry.filename.replace(/[^\w.\-]+/g, "_");
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `attachment; filename="${safeName}"`);
-    res.send(pdfBuffer);
+    res.json({
+      success: true,
+      report: reportJSON,
+      meta: {
+        partnerId,
+        partnerName: name,
+        period: periodLabel,
+        generatedAt,
+        historyId: id,
+      },
+    });
   } catch (e) {
     console.error("Generate error:", e?.stack || e);
     next(e);

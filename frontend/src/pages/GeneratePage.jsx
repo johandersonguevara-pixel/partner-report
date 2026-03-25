@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { fetchJson, generateReport } from '../api.js'
+import QBRReport from '../components/QBRReport.jsx'
 
 const FALLBACK_PARTNERS = [
   { id: 'mercadopago-br', name: 'Mercado Pago', region: 'Brasil', tier: 'Strategic' },
@@ -28,9 +29,7 @@ const B = {
 const STEPS = [
   { icon: '📊', label: 'Buscando dados do Metabase' },
   { icon: '🧠', label: 'Claude analisando performance' },
-  { icon: '✍️', label: 'Gerando narrativa e insights' },
-  { icon: '📄', label: 'Montando documento PDF' },
-  { icon: '📦', label: 'Exportando arquivo final' },
+  { icon: '✨', label: 'Gerando relatório estruturado (JSON)' },
 ]
 
 const QUARTERS = ['Q1 2025','Q2 2025','Q3 2025','Q4 2025','Q1 2026']
@@ -163,11 +162,17 @@ export default function GeneratePage({ user, onGenerated }) {
     setStatus('loading'); setStep(0); setResult(null); setError('')
 
     const interval = setInterval(() => {
-      setStep(s => { if (s >= STEPS.length - 2) { clearInterval(interval); return s } return s + 1 })
-    }, 1800)
+      setStep((s) => {
+        if (s >= STEPS.length - 2) {
+          clearInterval(interval)
+          return s
+        }
+        return s + 1
+      })
+    }, 1600)
 
     try {
-      const res = await generateReport(
+      const data = await generateReport(
         {
           partnerId: sel.id,
           partnerName: sel.name,
@@ -178,66 +183,15 @@ export default function GeneratePage({ user, onGenerated }) {
         pdfFile || undefined
       )
       clearInterval(interval)
-      const ct = (res.headers.get('content-type') || '').toLowerCase()
 
-      let blob
-      let filename = `Yuno_PartnerReport_${sel.name.replace(/\s/g, '_')}_${quarter.replace(/\s/g, '_')}.pdf`
-      let entryId = Date.now()
-      let partnerLabel = sel.name
-      let quarterLabel = quarter
-
-      if (ct.includes('application/pdf')) {
-        if (!res.ok) {
-          const errText = await res.text()
-          throw new Error(
-            errText?.trim()?.slice(0, 180) ||
-              `Falha na API (${res.status}). Confirme VITE_API_URL e o backend.`
-          )
-        }
-        blob = await res.blob()
-        const dispo = res.headers.get('content-disposition') || ''
-        const m = /filename\*?=(?:UTF-8''|")?([^";\n]+)/i.exec(dispo)
-        if (m) {
-          try {
-            filename = decodeURIComponent(m[1].replace(/"/g, '').trim())
-          } catch {
-            filename = m[1].replace(/"/g, '').trim()
-          }
-        }
-      } else {
-        const text = await res.text()
-        let data
-        try {
-          data = text ? JSON.parse(text) : null
-        } catch {
-          if (!res.ok) {
-            throw new Error(
-              text?.trim()?.slice(0, 180) ||
-                `Falha na API (${res.status}). Confirme VITE_API_URL e se o backend está no ar.`
-            )
-          }
-          throw new Error('Resposta inválida do servidor')
-        }
-        if (!res.ok) {
-          throw new Error(
-            data?.error || `Erro ao gerar documento (${res.status}). Ver consola do backend.`
-          )
-        }
-        entryId = data.id || entryId
-        partnerLabel = data.partnerName || sel.name
-        quarterLabel = data.period || quarter
-        if (data.pdfBase64) {
-          const bin = atob(data.pdfBase64)
-          const bytes = new Uint8Array(bin.length)
-          for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
-          blob = new Blob([bytes], { type: 'application/pdf' })
-        } else {
-          blob = new Blob([data.reportMarkdown || ''], { type: 'text/markdown;charset=utf-8' })
-          filename = filename.replace(/\.pdf$/i, '.md')
-        }
+      if (!data?.success || !data.report) {
+        throw new Error(data?.error || 'Resposta inválida do servidor (sem relatório)')
       }
 
-      const url = URL.createObjectURL(blob)
+      const entryId = data.meta?.historyId ?? Date.now()
+      const partnerLabel = data.meta?.partnerName ?? sel.name
+      const quarterLabel = data.meta?.period ?? quarter
+
       const entry = {
         id: entryId,
         partner: partnerLabel,
@@ -245,16 +199,20 @@ export default function GeneratePage({ user, onGenerated }) {
         quarter: quarterLabel,
         generated_by: user.name,
         generated_at: new Date().toLocaleString('pt-BR'),
-        url,
-        filename,
+        url: null,
+        filename: null,
       }
 
       setStep(STEPS.length - 1)
       setTimeout(() => {
-        setResult(entry)
+        setResult({
+          ...entry,
+          report: data.report,
+          meta: data.meta,
+        })
         setStatus('done')
         onGenerated(entry)
-      }, 600)
+      }, 400)
     } catch (err) {
       clearInterval(interval)
       setError(err.message || 'Erro inesperado')
@@ -384,14 +342,14 @@ export default function GeneratePage({ user, onGenerated }) {
             </div>
 
             <button onClick={handleGenerate} disabled={!can} style={{ width:'100%', padding:11, borderRadius:8, border:'none', cursor:can?'pointer':'not-allowed', background:can?`linear-gradient(135deg,${B.blue},${B.blueDark})`:'#E8EAF5', color:can?B.white:B.gray, fontSize:13, fontWeight:700, fontFamily:'inherit', transition:'all .2s' }}>
-              {status==='loading' ? '⏳ Analisando dados e gerando QBR...' : '📋 Gerar Documento QBR'}
+              {status==='loading' ? '⏳ Analisando dados e gerando QBR...' : '📋 Gerar relatório QBR'}
             </button>
 
             {status==='error' && <div style={{ marginTop:12, padding:'10px 12px', background:'#fef2f2', border:'1px solid #fecaca', borderRadius:8, fontSize:12, color:'#dc2626' }}>❌ {error}</div>}
           </div>
         </div>
 
-        <div>
+        <div style={{ minWidth: 0 }}>
           {status==='idle' && (
             <div style={{ background:B.white, borderRadius:12, border:'1px solid #E8EAF5', padding:40, textAlign:'center' }}>
               <div style={{ fontSize:40, marginBottom:16 }}>📋</div>
@@ -426,31 +384,19 @@ export default function GeneratePage({ user, onGenerated }) {
             </div>
           )}
 
-          {status==='done' && result && (
-            <div style={{ background:B.white, borderRadius:12, border:'1px solid #bbf7d0', overflow:'hidden' }}>
-              <div style={{ background:'#f0fdf4', padding:'14px 20px', borderBottom:'1px solid #bbf7d0', display:'flex', alignItems:'center', gap:10 }}>
-                <div style={{ width:32, height:32, borderRadius:'50%', background:'#16a34a', display:'flex', alignItems:'center', justifyContent:'center', color:'white', fontSize:16 }}>✓</div>
+          {status==='done' && result?.report && (
+            <div>
+              <div style={{ background:'#f0fdf4', borderRadius:12, border:'1px solid #bbf7d0', padding:'12px 16px', marginBottom:16, display:'flex', alignItems:'center', gap:10 }}>
+                <div style={{ width:28, height:28, borderRadius:'50%', background:'#16a34a', display:'flex', alignItems:'center', justifyContent:'center', color:'white', fontSize:14 }}>✓</div>
                 <div>
-                  <div style={{ fontSize:13, fontWeight:700, color:'#15803d' }}>Documento gerado com sucesso!</div>
+                  <div style={{ fontSize:13, fontWeight:700, color:'#15803d' }}>Relatório pronto</div>
                   <div style={{ fontSize:11, color:'#16a34a' }}>{result.generated_at}</div>
                 </div>
-              </div>
-              <div style={{ padding:20 }}>
-                <div style={{ background:'#F5F6FA', borderRadius:8, padding:'12px 16px', marginBottom:16 }}>
-                  {[['Parceiro',result.partner],['Quarter',result.quarter],['Região',result.region]].map(([k,v]) => (
-                    <div key={k} style={{ display:'flex', justifyContent:'space-between', fontSize:12, marginBottom:4 }}>
-                      <span style={{ color:B.gray }}>{k}</span>
-                      <span style={{ fontWeight:600, color:B.black }}>{v}</span>
-                    </div>
-                  ))}
-                </div>
-                <a href={result.url} download={result.filename} style={{ display:'block', width:'100%', padding:11, background:`linear-gradient(135deg,${B.blue},${B.blueDark})`, color:B.white, borderRadius:8, textAlign:'center', fontSize:13, fontWeight:700, textDecoration:'none', marginBottom:10 }}>
-                  📥 Baixar PDF
-                </a>
-                <button onClick={reset} style={{ width:'100%', padding:9, background:'transparent', border:'1px solid #E8EAF5', borderRadius:8, fontSize:12, fontWeight:600, color:B.gray, cursor:'pointer', fontFamily:'inherit' }}>
-                  + Gerar novo documento
+                <button onClick={reset} type="button" style={{ marginLeft:'auto', padding:'6px 12px', borderRadius:8, border:'1px solid #bbf7d0', background:B.white, fontSize:11, fontWeight:700, color:'#15803d', cursor:'pointer', fontFamily:'inherit' }}>
+                  Novo relatório
                 </button>
               </div>
+              <QBRReport report={result.report} meta={result.meta} />
             </div>
           )}
 

@@ -4,115 +4,208 @@ const client = process.env.ANTHROPIC_API_KEY
   ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
   : null;
 
-const SYSTEM_PROMPT = `You are a senior Partnership Analyst at Yuno presenting a QBR to a payment partner.
-This report will be presented BY the Yuno Partner Manager TO the partner's team.
-The goal is to celebrate wins, flag problems WITH context and explanations, and arrive
-with a clear action plan that both sides can commit to.
+const SYSTEM_PROMPT = `You are a senior Partnership Analyst at Yuno generating a QBR report.
+You MUST respond with ONLY a valid JSON object. No markdown, no text before or after.
+The JSON must follow EXACTLY the schema below.
 
-STRICT DATA RULES:
-1. Only use metrics explicitly present in the input data. Never invent numbers.
-2. Every insight must reference a specific data point from the input.
-3. Financial loss = declined volume in BRL. Calculate from data provided.
-4. If a metric is missing, omit that section entirely.
+STRICT RULES:
+1. Only use data explicitly present in the input. Never invent numbers.
+2. Every insight must reference a specific data point.
+3. Financial loss per decline code = (code_total / total_declined) x total_declined_volume
+4. Language: Brazilian partners → pt-BR, LATAM non-Brazil → es, Global → en
+5. Approval rate benchmarks: credit ≥70% healthy, 65-70% attention, <65% critical. PIX ≥75% healthy. Boleto ≥38% normal. Debit ≥40% healthy, <20% critical. Wallet ≥55% healthy.
 
-LANGUAGE: Auto-detect from partner region.
-- Brazilian partners → Portuguese pt-BR
-- LATAM non-Brazil → Spanish
-- Global → English
-
-APPROVAL RATE BENCHMARKS:
-- Credit card: ≥70% healthy, 65-70% needs attention, <65% critical
-- PIX: ≥75% healthy, 65-75% attention, <65% critical
-- Boleto: ≥38% normal
-- Debit card: ≥40% healthy, <20% critical
-- Wallet: ≥55% healthy, <50% critical
-
-OUTPUT — use exactly these sections in order:
-
-## 1. Sumário Executivo
-5 bullet points max. Format: **Métrica:** valor — o que isso significa para a parceria.
-
-## 2. Performance Mensal
-Table: Mês | Transações | Aprovadas | Taxa Aprov. | Volume Total | Volume Aprovado
-After table: 2-3 lines explaining WHY approval rate changed and what drove volume shifts.
-
-## 3. Performance por Método de Pagamento
-Table: Método | Transações | Taxa Aprov. | Volume | Ticket Médio | Status
-Status: use Saudável / Atenção / Crítico based on benchmarks.
-After table: for each Atenção or Crítico method write one paragraph with:
-- What the data shows
-- Likely root cause
-- Specific action suggested to the partner
-
-## 4. Top Merchants — Destaques e Alertas
-
-### Destaques
-For each merchant with approval rate > 75% OR strong growth:
-**[Name]** — [rate]% | R$ [volume] | [txns] transações
-> Por que está em destaque: [specific reason from data]
-> Oportunidade: [concrete upsell or expansion idea]
-
-### Alertas
-For each merchant below benchmark OR with declining trend:
-**[Name]** — [rate]% | R$ [volume] | [txns] transações
-> Por que está em alerta: [specific data evidence with numbers]
-> Causa provável: [root cause based on decline codes, transaction type, ticket size]
-> O que sugerimos: [concrete action with owner and timeline]
-> Impacto potencial: [estimated recovery calculated from data]
-
-## 5. Análise de Rejeições — Códigos e Impacto Financeiro
-Table: Código | Total | % Rejeições | Volume Perdido Est. BRL | Tipo | Ação
-- Volume perdido por código = (total_codigo / total_rejeicoes) x volume_total_recusado
-- Tipo: Soft Decline / Hard Decline / Operacional
-
-After table, Top 3 oportunidades de recuperação imediata:
-For each:
-**[Código]** — R$ [volume]M em risco
-- O que está acontecendo: [explanation from data]
-- Ação conjunta sugerida: [specific action with owner and timeline]
-- Recuperação estimada: [conservative estimate]
-
-## 6. Oportunidades de Crescimento
-For each opportunity found in data:
-### [Title]
-- O que os dados mostram: [specific numbers]
-- Receita potencial: R$ [calculated value] — [show the calculation]
-- Ação sugerida: [who does what, by when]
-
-## 7. Próximos Passos
-Table: # | Ação | Responsável | Prazo Sugerido | Impacto Esperado
-Max 7 rows. Prioritize by financial impact.
-
-Footer: Fonte: [source] | Período: [period] | Preparado por: Yuno Partner Intelligence`;
+REQUIRED JSON SCHEMA:
+{
+  "partner": "string",
+  "period": "string",
+  "language": "pt-BR | es | en",
+  "generatedAt": "ISO date string",
+  "kpis": {
+    "totalTPV": "string (e.g. R$ 971,8M)",
+    "totalTransactions": "string (e.g. 2,4M)",
+    "approvalRate": "string (e.g. 65,99%)",
+    "declinedVolume": "string (e.g. R$ 473,8M)",
+    "tpvGrowth": "string (e.g. +28% vs Q4)",
+    "topOpportunity": "string (e.g. R$ 21,6M/mês)"
+  },
+  "executiveSummary": [
+    { "label": "string", "value": "string", "context": "string" }
+  ],
+  "monthlyPerformance": [
+    {
+      "month": "string",
+      "transactions": "string",
+      "approved": "string",
+      "approvalRate": "number (e.g. 75.18)",
+      "totalVolume": "string",
+      "approvedVolume": "string"
+    }
+  ],
+  "trendAnalysis": "string (2-3 sentences explaining why approval rate changed)",
+  "paymentMethods": [
+    {
+      "method": "string",
+      "transactions": "string",
+      "approvalRate": "number",
+      "volume": "string",
+      "avgTicket": "string",
+      "status": "healthy | attention | critical",
+      "analysis": "string (only for attention/critical — what the data shows, root cause, suggested action)"
+    }
+  ],
+  "merchants": {
+    "highlights": [
+      {
+        "name": "string",
+        "approvalRate": "string",
+        "volume": "string",
+        "transactions": "string",
+        "whyHighlight": "string",
+        "opportunity": "string"
+      }
+    ],
+    "alerts": [
+      {
+        "name": "string",
+        "approvalRate": "string",
+        "volume": "string",
+        "transactions": "string",
+        "whyAlert": "string (specific data evidence with numbers)",
+        "rootCause": "string",
+        "suggestion": "string (concrete action with owner and timeline)",
+        "potentialImpact": "string"
+      }
+    ]
+  },
+  "declineCodes": [
+    {
+      "code": "string",
+      "total": "string",
+      "pctOfDeclines": "number",
+      "estimatedLostVolume": "string",
+      "type": "soft | hard | operational",
+      "action": "string"
+    }
+  ],
+  "top3Opportunities": [
+    {
+      "code": "string",
+      "lostVolume": "string",
+      "whatIsHappening": "string",
+      "suggestedAction": "string",
+      "estimatedRecovery": "string"
+    }
+  ],
+  "growthOpportunities": [
+    {
+      "title": "string",
+      "dataEvidence": "string",
+      "revenuePotential": "string",
+      "suggestedAction": "string"
+    }
+  ],
+  "nextSteps": [
+    {
+      "priority": "number (1-7)",
+      "action": "string",
+      "description": "string",
+      "owner": "string",
+      "deadline": "string",
+      "expectedImpact": "string",
+      "category": "urgente | tecnico | comercial"
+    }
+  ]
+}`;
 
 /**
- * @param {{ partnerName: string; partnerId: string; period: string; rawDataText: string }} input
+ * Strip markdown code fences and parse JSON; fallback to first {...} block.
+ * @param {string} raw
+ * @returns {unknown}
  */
-export async function generateReportMarkdown(input) {
+function parseClaudeJSON(raw) {
+  let t = String(raw || "").trim();
+  t = t.replace(/^```(?:json)?\s*/i, "");
+  t = t.replace(/\s*```\s*$/i, "");
+  t = t.trim();
+  try {
+    return JSON.parse(t);
+  } catch {
+    const start = t.indexOf("{");
+    const end = t.lastIndexOf("}");
+    if (start >= 0 && end > start) {
+      const slice = t.slice(start, end + 1);
+      return JSON.parse(slice);
+    }
+    throw new Error("Could not parse JSON from model response");
+  }
+}
+
+function templateReportJSON({ partnerName, period, metrics: _metrics }) {
+  const now = new Date().toISOString();
+  return {
+    partner: partnerName || "Partner",
+    period: period || "—",
+    language: "pt-BR",
+    generatedAt: now,
+    kpis: {
+      totalTPV: "—",
+      totalTransactions: "—",
+      approvalRate: "—",
+      declinedVolume: "—",
+      tpvGrowth: "—",
+      topOpportunity: "—",
+    },
+    executiveSummary: [
+      {
+        label: "Status",
+        value: "—",
+        context:
+          "Configure ANTHROPIC_API_KEY to enable AI-generated JSON reports from your data.",
+      },
+    ],
+    monthlyPerformance: [],
+    trendAnalysis: "",
+    paymentMethods: [],
+    merchants: { highlights: [], alerts: [] },
+    declineCodes: [],
+    top3Opportunities: [],
+    growthOpportunities: [],
+    nextSteps: [],
+  };
+}
+
+/**
+ * @param {{
+ *   partnerName: string
+ *   partnerId: string
+ *   period: string
+ *   rawDataText?: string
+ *   metrics?: unknown
+ * }} input
+ * @returns {Promise<object>}
+ */
+export async function generateReportJSON(input) {
   if (!client) {
-    return templateReport(input);
+    return templateReportJSON(input);
   }
 
   const userMessage = `Generate a QBR report for partner: ${input.partnerName}
+Partner ID: ${input.partnerId}
 Period: ${input.period}
 
 RAW DATA FROM DATABASE:
 ---
-${input.rawDataText || JSON.stringify(input.metrics, null, 2)}
+${input.rawDataText || JSON.stringify(input.metrics ?? {}, null, 2)}
 ---
 
-Follow all system instructions. Output only the markdown report, no preamble.`;
+Follow all system instructions. Respond with ONLY the JSON object, no other text.`;
 
   const msg = await client.messages.create({
     model: "claude-opus-4-6",
     max_tokens: 4096,
     system: SYSTEM_PROMPT,
-    messages: [
-      {
-        role: "user",
-        content: userMessage,
-      },
-    ],
+    messages: [{ role: "user", content: userMessage }],
   });
 
   const text = msg.content
@@ -121,20 +214,18 @@ Follow all system instructions. Output only the markdown report, no preamble.`;
     .join("\n")
     .trim();
 
-  return text || templateReport(input);
-}
+  if (!text) {
+    return templateReportJSON(input);
+  }
 
-function templateReport({ partnerName, period, metrics }) {
-  return [
-    `# Partner QBR — ${partnerName}`,
-    `_Period: ${period}_`,
-    "",
-    "## Executive Summary",
-    "- Configure `ANTHROPIC_API_KEY` to enable AI-generated reports.",
-    "",
-    "## Raw Metrics",
-    "```json",
-    JSON.stringify(metrics, null, 2),
-    "```",
-  ].join("\n");
+  try {
+    const parsed = parseClaudeJSON(text);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed;
+    }
+  } catch (e) {
+    console.error("Claude JSON parse error:", e?.message || e);
+  }
+
+  return templateReportJSON(input);
 }

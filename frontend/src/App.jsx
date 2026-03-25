@@ -49,7 +49,13 @@ export default function App() {
   return (
     <div style={{ minHeight: '100vh', background: '#F5F6FA', fontFamily: "'Titillium Web', sans-serif" }}>
       <Header user={CURRENT_USER} page={page} setPage={setPage} />
-      <main style={{ maxWidth: 960, margin: '0 auto', padding: '32px 24px' }}>
+      <main
+        style={{
+          maxWidth: page === 'generate' ? 1180 : 960,
+          margin: '0 auto',
+          padding: '32px 24px',
+        }}
+      >
         {page === 'generate'
           ? <GeneratePage user={CURRENT_USER} onGenerated={addToHistory} />
           : <HistoryPage history={history} />

@@ -36,7 +36,7 @@ export async function fetchJson(path, options = {}) {
 }
 
 /**
- * POST /api/generate — PDF na resposta (application/pdf) ou JSON legado.
+ * POST /api/generate — resposta JSON { success, report, meta }.
  * Com `pdfFile`: multipart/form-data (partnerId, partnerName, period, region, generatedBy, file).
  * Sem arquivo: application/json (fluxo Metabase/sample).
  *
@@ -50,11 +50,12 @@ export async function fetchJson(path, options = {}) {
  *   end?: string
  * }} payload
  * @param {File | null | undefined} [pdfFile]
- * @returns {Promise<Response>}
+ * @returns {Promise<{ success: boolean, report: object, meta: object }>}
  */
 export async function generateReport(payload, pdfFile) {
   const url = apiPath("/api/generate");
 
+  let res;
   if (pdfFile instanceof File) {
     const fd = new FormData();
     fd.append("partnerId", payload.partnerId);
@@ -67,20 +68,39 @@ export async function generateReport(payload, pdfFile) {
       fd.append("generatedBy", payload.generatedBy);
     }
     fd.append("file", pdfFile, pdfFile.name || "report.pdf");
-    return fetch(url, { method: "POST", body: fd });
+    res = await fetch(url, { method: "POST", body: fd });
+  } else {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        partnerId: payload.partnerId,
+        partnerName: payload.partnerName,
+        period: payload.period,
+        region: payload.region,
+        generatedBy: payload.generatedBy,
+        start: payload.start,
+        end: payload.end,
+      }),
+    });
   }
 
-  return fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      partnerId: payload.partnerId,
-      partnerName: payload.partnerName,
-      period: payload.period,
-      region: payload.region,
-      generatedBy: payload.generatedBy,
-      start: payload.start,
-      end: payload.end,
-    }),
-  });
+  const text = await res.text();
+  let data;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = { error: text || "Invalid JSON" };
+  }
+
+  if (!res.ok) {
+    const err = new Error(
+      data?.error || res.statusText || `Request failed (${res.status})`
+    );
+    err.status = res.status;
+    err.data = data;
+    throw err;
+  }
+
+  return data;
 }
