@@ -6,6 +6,9 @@ marked.setOptions({
   breaks: true,
 });
 
+const CHART_CDN =
+  "https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js";
+
 function escHtml(s) {
   return String(s ?? "")
     .replace(/&/g, "&amp;")
@@ -14,9 +17,262 @@ function escHtml(s) {
     .replace(/"/g, "&quot;");
 }
 
-function buildHtmlDocument(markdownHtml, partnerName, period) {
+function splitPipeRow(line) {
+  const parts = line.split("|").map((p) => p.trim());
+  if (parts[0] === "") parts.shift();
+  if (parts.length && parts[parts.length - 1] === "") parts.pop();
+  return parts;
+}
+
+/** @returns {{ headers: string[], rows: string[][] }[]} */
+function parseMarkdownTables(md) {
+  const lines = String(md || "").split(/\r?\n/);
+  const tables = [];
+  for (let i = 0; i < lines.length - 1; i++) {
+    const line = lines[i];
+    if (!line.trim().startsWith("|")) continue;
+    const sep = lines[i + 1];
+    if (!sep || !/^\|[\s\-:|]+\|/.test(sep.trim())) continue;
+    const headers = splitPipeRow(line);
+    if (headers.length < 2) continue;
+    i += 2;
+    const rows = [];
+    while (i < lines.length && lines[i].trim().startsWith("|")) {
+      const cells = splitPipeRow(lines[i]);
+      if (cells.length >= 1) rows.push(cells);
+      i++;
+    }
+    i--;
+    tables.push({ headers, rows });
+  }
+  return tables;
+}
+
+function parseNum(s) {
+  if (s == null) return NaN;
+  let t = String(s).replace(/[^\d.,\-]/g, "").replace(/\s/g, "");
+  if (!t) return NaN;
+  if (t.includes(",") && t.includes(".")) {
+    if (t.lastIndexOf(",") > t.lastIndexOf("."))
+      t = t.replace(/\./g, "").replace(",", ".");
+    else t = t.replace(/,/g, "");
+  } else if (t.includes(",")) t = t.replace(",", ".");
+  const n = parseFloat(t);
+  return Number.isFinite(n) ? n : NaN;
+}
+
+function parsePct(s) {
+  if (s == null) return NaN;
+  const m = String(s).match(/([\d.,]+)\s*%/);
+  if (m) return parseNum(m[1]);
+  return parseNum(s);
+}
+
+function headerLower(h) {
+  return h.map((c) => c.toLowerCase());
+}
+
+function findCol(headers, tests) {
+  const h = headerLower(headers);
+  for (let i = 0; i < h.length; i++) {
+    if (tests.every((fn) => fn(h[i]))) return i;
+  }
+  return -1;
+}
+
+function isMonthlyTable(headers) {
+  const h = headerLower(headers).join(" | ");
+  return (
+    /month|mês|mes/i.test(h) &&
+    (/volume|brl|tpv|valor/i.test(h) || /transact/i.test(h)) &&
+    /approval|aprov|taxa/i.test(h)
+  );
+}
+
+function isDeclineTable(headers) {
+  const h = headerLower(headers).join(" | ");
+  return (
+    /decline|rejei|recus|negad/i.test(h) &&
+    (/code|código/i.test(h) || /total/i.test(h)) &&
+    (/lost|perd|estim|volume|brl/i.test(h) || /%/i.test(h))
+  );
+}
+
+/**
+ * @param {string} md
+ */
+function extractChartDataFromMarkdown(md) {
+  const tables = parseMarkdownTables(md);
+  let monthly = null;
+  let declines = null;
+
+  for (const t of tables) {
+    if (!monthly && isMonthlyTable(t.headers)) {
+      const h = t.headers;
+      const mi =
+        findCol(h, [(c) => /month|mês|mes/i.test(c)]) >= 0
+          ? findCol(h, [(c) => /month|mês|mes/i.test(c)])
+          : 0;
+      const vi = findCol(h, [
+        (c) =>
+          /volume|brl|tpv|valor/i.test(c) &&
+          !/lost|perd|declin/i.test(c),
+      ]);
+      const ai = findCol(h, [(c) => /approval|aprov|taxa/i.test(c)]);
+
+      if (vi >= 0 && ai >= 0) {
+        const months = [];
+        const tpv = [];
+        const approvalPct = [];
+        for (const row of t.rows) {
+          if (row.length < Math.max(mi, vi, ai) + 1) continue;
+          const m = row[mi] || "";
+          const v = parseNum(row[vi]);
+          const a = parsePct(row[ai]);
+          if (!m || (!Number.isFinite(v) && !Number.isFinite(a))) continue;
+          months.push(m.trim());
+          tpv.push(Number.isFinite(v) ? v : 0);
+          approvalPct.push(Number.isFinite(a) ? a : 0);
+        }
+        if (months.length >= 2) monthly = { months, tpv, approvalPct };
+      }
+    }
+
+    if (!declines && isDeclineTable(t.headers)) {
+      const h = t.headers;
+      let codeIdx = findCol(h, [(c) => /decline.*code|code.*decline|código/i.test(c)]);
+      if (codeIdx < 0) codeIdx = findCol(h, [(c) => /^code$/i.test(c.trim())]);
+      if (codeIdx < 0) codeIdx = 0;
+
+      const vi = findCol(h, [
+        (c) =>
+          /lost|perd|estim|volume|brl/i.test(c) &&
+          !/% of total/i.test(c),
+      ]);
+
+      const ti = findCol(h, [
+        (c) => /^type$|tipo|classif|soft|hard|operac/i.test(c),
+      ]);
+
+      if (codeIdx >= 0 && vi >= 0) {
+        const items = [];
+        for (const row of t.rows) {
+          if (row.length <= Math.max(codeIdx, vi)) continue;
+          const code = (row[codeIdx] || "").trim();
+          const vol = parseNum(row[vi]);
+          const typeStr =
+            ti >= 0 ? (row[ti] || "").toLowerCase() : "";
+          if (!code || !Number.isFinite(vol) || vol <= 0) continue;
+          let tone = "operational";
+          if (/soft|recuper/i.test(typeStr)) tone = "soft";
+          else if (/hard|não recuper|nao recuper|irrecuper/i.test(typeStr))
+            tone = "hard";
+          else if (/operac|integrat|config|infra/i.test(typeStr))
+            tone = "operational";
+          items.push({ code, volume: vol, tone });
+        }
+        items.sort((a, b) => b.volume - a.volume);
+        const top = items.slice(0, 5);
+        if (top.length > 0) {
+          declines = {
+            codes: top.map((x) => x.code),
+            volumes: top.map((x) => x.volume),
+            tones: top.map((x) => x.tone),
+          };
+        }
+      }
+    }
+  }
+
+  let impact = null;
+  if (declines && declines.volumes.length) {
+    const total = declines.volumes.reduce((a, b) => a + b, 0);
+    let maxI = 0;
+    for (let i = 1; i < declines.volumes.length; i++) {
+      if (declines.volumes[i] > declines.volumes[maxI]) maxI = i;
+    }
+    impact = {
+      totalDeclinedBrl: total,
+      topCode: declines.codes[maxI],
+      topBrl: declines.volumes[maxI],
+    };
+  }
+
+  return { monthly, declines, impact };
+}
+
+function buildChartsSectionHtml(boot) {
+  const hasAny =
+    boot.impact ||
+    (boot.monthly &&
+      boot.monthly.months?.length) ||
+    (boot.declines && boot.declines.codes?.length);
+  if (!hasAny) return "";
+
+  let html = '<div class="charts-dashboard">';
+
+  if (boot.impact && boot.impact.totalDeclinedBrl > 0) {
+    const total = formatBrl(boot.impact.totalDeclinedBrl);
+    const top = formatBrl(boot.impact.topBrl);
+    const code = escHtml(boot.impact.topCode || "—");
+    html += `
+    <div class="impact-card" style="page-break-inside: avoid;">
+      <div class="impact-card__title">Impacto financeiro (estimado)</div>
+      <div class="impact-card__metric">Volume recusado (soma top declines)</div>
+      <div class="impact-card__value">${escHtml(total)}</div>
+      <div class="impact-card__sub">Maior oportunidade de recuperação</div>
+      <div class="impact-card__opp"><strong>${code}</strong> — ${escHtml(top)}</div>
+    </div>`;
+  }
+
+  if (boot.monthly && boot.monthly.months.length >= 2) {
+    html += `
+    <div class="chart-block" style="page-break-inside: avoid;">
+      <h3 class="chart-title">TPV mensal (volume processado)</h3>
+      <div class="chart-canvas-wrap chart-canvas-wrap--tall">
+        <canvas id="chartTpv"></canvas>
+      </div>
+    </div>
+    <div class="chart-block" style="page-break-inside: avoid;">
+      <h3 class="chart-title">Taxa de aprovação por mês vs benchmark (70%)</h3>
+      <div class="chart-canvas-wrap chart-canvas-wrap--tall">
+        <canvas id="chartApproval"></canvas>
+      </div>
+    </div>`;
+  }
+
+  if (boot.declines && boot.declines.codes.length > 0) {
+    html += `
+    <div class="chart-block chart-block--horizontal" style="page-break-inside: avoid;">
+      <h3 class="chart-title">Top 5 decline codes por volume de perda</h3>
+      <div class="chart-canvas-wrap chart-canvas-wrap--short">
+        <canvas id="chartDeclines"></canvas>
+      </div>
+    </div>`;
+  }
+
+  html += "</div>";
+  return html;
+}
+
+function formatBrl(n) {
+  if (!Number.isFinite(n)) return "—";
+  try {
+    return new Intl.NumberFormat("pt-BR", {
+      style: "currency",
+      currency: "BRL",
+      maximumFractionDigits: 0,
+    }).format(n);
+  } catch {
+    return `R$ ${n.toFixed(0)}`;
+  }
+}
+
+function buildHtmlDocument(markdownHtml, partnerName, period, chartBoot) {
   const pName = escHtml(partnerName || "Partner");
   const pPeriod = escHtml(period || "—");
+  const chartsHtml = buildChartsSectionHtml(chartBoot);
+  const bootJson = JSON.stringify(chartBoot).replace(/</g, "\\u003c");
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -77,6 +333,57 @@ function buildHtmlDocument(markdownHtml, partnerName, period) {
       font-weight: 400;
       color: rgba(255,255,255,0.9);
       margin: 0;
+    }
+    .charts-dashboard {
+      padding: 32px 56px 8px;
+      background: #ffffff;
+    }
+    .impact-card {
+      background: #1726A6;
+      color: #ffffff;
+      border-radius: 12px;
+      padding: 24px 28px;
+      margin-bottom: 28px;
+      box-shadow: 0 8px 24px rgba(23, 38, 166, 0.25);
+    }
+    .impact-card__title {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: #E0ED80;
+      margin-bottom: 12px;
+    }
+    .impact-card__metric { font-size: 13px; opacity: 0.9; margin-bottom: 4px; }
+    .impact-card__value { font-size: 28px; font-weight: 700; margin-bottom: 16px; }
+    .impact-card__sub { font-size: 12px; opacity: 0.85; margin-bottom: 4px; }
+    .impact-card__opp { font-size: 15px; font-weight: 600; }
+    .chart-block {
+      margin-bottom: 28px;
+      padding: 20px 22px;
+      border: 1px solid #E8EAF5;
+      border-radius: 12px;
+      background: #fafbff;
+    }
+    .chart-title {
+      margin: 0 0 14px 0;
+      font-size: 15px;
+      font-weight: 700;
+      color: #1726A6;
+    }
+    .chart-canvas-wrap {
+      position: relative;
+      width: 100%;
+    }
+    .chart-canvas-wrap--tall { height: 280px; }
+    .chart-canvas-wrap--short { height: 220px; }
+    .chart-canvas-wrap canvas {
+      width: 100% !important;
+      height: 100% !important;
+      max-height: 280px;
+    }
+    .chart-block--horizontal .chart-canvas-wrap canvas {
+      max-height: 220px;
     }
     .content {
       flex: 1;
@@ -201,6 +508,7 @@ function buildHtmlDocument(markdownHtml, partnerName, period) {
       <h1 class="header-main-title">${pName}</h1>
       <p class="header-period">${pPeriod}</p>
     </header>
+    ${chartsHtml}
     <main class="content">
       ${markdownHtml}
     </main>
@@ -209,6 +517,147 @@ function buildHtmlDocument(markdownHtml, partnerName, period) {
       <a href="https://www.y.uno">www.y.uno</a>
     </footer>
   </div>
+  <script src="${CHART_CDN}"></script>
+  <script>
+(function () {
+  function done() {
+    window.__CHARTS_READY__ = true;
+  }
+  try {
+    var boot = ${bootJson};
+    if (typeof Chart !== "undefined") {
+    var yunoBlue = "#3E4FE0";
+    var yunoBlueFill = "rgba(62, 79, 224, 0.2)";
+    var coral = "#D85A30";
+    var innovation = "#E0ED80";
+    var gray = "#92959B";
+    var benchmark = 70;
+
+    if (boot.monthly && boot.monthly.months && boot.monthly.months.length >= 2) {
+      var el = document.getElementById("chartTpv");
+      if (el) {
+        new Chart(el, {
+          type: "line",
+          data: {
+            labels: boot.monthly.months,
+            datasets: [
+              {
+                label: "TPV (BRL)",
+                data: boot.monthly.tpv,
+                borderColor: yunoBlue,
+                backgroundColor: yunoBlueFill,
+                fill: true,
+                tension: 0.25,
+                borderWidth: 2,
+              },
+            ],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: true } },
+            scales: {
+              y: { beginAtZero: true, ticks: { color: "#282A30" } },
+              x: { ticks: { color: "#282A30" } },
+            },
+          },
+        });
+      }
+
+      var el2 = document.getElementById("chartApproval");
+      if (el2) {
+        var rates = boot.monthly.approvalPct;
+        var barColors = rates.map(function (v) {
+          return v < benchmark ? coral : yunoBlue;
+        });
+        new Chart(el2, {
+          type: "bar",
+          data: {
+            labels: boot.monthly.months,
+            datasets: [
+              {
+                label: "Approval rate %",
+                data: rates,
+                backgroundColor: barColors,
+                borderWidth: 0,
+                order: 2,
+              },
+              {
+                type: "line",
+                label: "Benchmark 70%",
+                data: rates.map(function () {
+                  return benchmark;
+                }),
+                borderColor: "#dc2626",
+                borderDash: [6, 6],
+                borderWidth: 2,
+                pointRadius: 0,
+                fill: false,
+                order: 1,
+              },
+            ],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: true } },
+            scales: {
+              y: {
+                beginAtZero: true,
+                max: 100,
+                ticks: { color: "#282A30" },
+              },
+              x: { ticks: { color: "#282A30" } },
+            },
+          },
+        });
+      }
+    }
+
+    if (boot.declines && boot.declines.codes && boot.declines.codes.length) {
+      var el3 = document.getElementById("chartDeclines");
+      if (el3) {
+        var bg = boot.declines.tones.map(function (t) {
+          if (t === "soft") return innovation;
+          if (t === "hard") return coral;
+          return gray;
+        });
+        new Chart(el3, {
+          type: "bar",
+          data: {
+            labels: boot.declines.codes,
+            datasets: [
+              {
+                label: "Volume perdido (BRL)",
+                data: boot.declines.volumes,
+                backgroundColor: bg,
+                borderWidth: 0,
+              },
+            ],
+          },
+          options: {
+            indexAxis: "y",
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+              x: { beginAtZero: true, ticks: { color: "#282A30" } },
+              y: { ticks: { color: "#282A30" } },
+            },
+          },
+        });
+      }
+    }
+    }
+  } catch (e) {
+    console.error(e);
+  } finally {
+    requestAnimationFrame(function () {
+      setTimeout(done, 80);
+    });
+  }
+})();
+  </script>
 </body>
 </html>`;
 }
@@ -220,8 +669,10 @@ function buildHtmlDocument(markdownHtml, partnerName, period) {
  */
 export async function markdownToPdfBuffer(text, options = {}) {
   const { partnerName = "", period = "" } = options;
-  const markdownHtml = marked.parse(String(text || ""));
-  const html = buildHtmlDocument(markdownHtml, partnerName, period);
+  const md = String(text || "");
+  const markdownHtml = marked.parse(md);
+  const chartBoot = extractChartDataFromMarkdown(md);
+  const html = buildHtmlDocument(markdownHtml, partnerName, period, chartBoot);
 
   const browser = await puppeteer.launch({
     headless: true,
@@ -230,7 +681,13 @@ export async function markdownToPdfBuffer(text, options = {}) {
 
   try {
     const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: "networkidle0" });
+    await page.setContent(html, {
+      waitUntil: "networkidle0",
+      timeout: 10000,
+    });
+    await page.waitForFunction(() => window.__CHARTS_READY__ === true, {
+      timeout: 10000,
+    });
     const pdfUint8 = await page.pdf({
       format: "A4",
       printBackground: true,
