@@ -17,6 +17,17 @@ function escHtml(s) {
     .replace(/"/g, "&quot;");
 }
 
+/** Remove common markdown emphasis so chart/table-derived strings render cleanly */
+function stripMarkdown(s) {
+  let t = String(s ?? "");
+  t = t.replace(/\*\*([\s\S]+?)\*\*/g, "$1");
+  t = t.replace(/\*([\s\S]+?)\*/g, "$1");
+  t = t.replace(/__([\s\S]+?)__/g, "$1");
+  t = t.replace(/_([\s\S]+?)_/g, "$1");
+  t = t.replace(/[*_]/g, "");
+  return t.trim();
+}
+
 function splitPipeRow(line) {
   const parts = line.split("|").map((p) => p.trim());
   if (parts[0] === "") parts.shift();
@@ -63,13 +74,111 @@ function parseNum(s) {
 
 function parsePct(s) {
   if (s == null) return NaN;
-  const m = String(s).match(/([\d.,]+)\s*%/);
+  const m = String(stripMarkdown(s)).match(/([\d.,]+)\s*%/);
   if (m) return parseNum(m[1]);
-  return parseNum(s);
+  return parseNum(stripMarkdown(s));
+}
+
+/** BRL / volume cells: supports R$ 473M, 12,5 mi, milhões, MM, bilhões */
+function parseMoneyCell(s) {
+  const raw = stripMarkdown(s).trim();
+  if (!raw) return NaN;
+  const lower = raw.toLowerCase().replace(/\s+/g, " ");
+  let mult = 1;
+  if (
+    /\b(mm|milh(ões|oes|ao)|mi\b)/i.test(lower) ||
+    /\d[.,]?\d*\s*m\s*$/i.test(raw.trim()) ||
+    /\d[.,]?\d*m\s*$/i.test(raw.replace(/\s/g, ""))
+  ) {
+    mult = 1e6;
+  } else if (/\b(bilh(ões|oes|ao)|bi\b)/i.test(lower)) {
+    mult = 1e9;
+  } else if (/\b(k|mil)\b/i.test(lower) && /[\d.,]{2,}/.test(raw)) {
+    mult = 1e3;
+  }
+  const n = parseNum(raw);
+  if (!Number.isFinite(n)) return NaN;
+  return mult !== 1 ? n * mult : n;
+}
+
+/** Approval rate axis: 0–100; treat decimals 0–1 as fractions */
+function normalizePctValue(n) {
+  const x = Number(n);
+  if (!Number.isFinite(x)) return NaN;
+  if (x > 0 && x <= 1) return x * 100;
+  return x;
+}
+
+function approvalRateColScore(name) {
+  const c = stripMarkdown(name).toLowerCase();
+  if (/^aprovadas$/i.test(c.trim())) return 0;
+  if (/transa(c(ões|oes))?$/i.test(c) && !/taxa/i.test(c)) return 0;
+  if (/taxa.*aprov|aprov.*%|taxa.*%/i.test(c)) return 12;
+  if (/%.*aprov|aprov.*rate|approval.*rate/i.test(c)) return 11;
+  if (/\btaxa\b/.test(c) && /aprov|approval/.test(c)) return 10;
+  if (/\brate\b/.test(c) && /%|aprov|approval/.test(c)) return 9;
+  if (/%/.test(c) && /aprov|approval/.test(c)) return 8;
+  if (/^taxa$/i.test(c.trim())) return 3;
+  if (/aprov|approval/.test(c) && !/^aprovadas$/i.test(c.trim())) return 2;
+  return -1;
+}
+
+function findApprovalRateCol(headers) {
+  const cleaned = headers.map((x) => stripMarkdown(x || ""));
+  let best = -1;
+  let score = -99;
+  for (let i = 0; i < cleaned.length; i++) {
+    const s = approvalRateColScore(cleaned[i]);
+    if (s > score) {
+      score = s;
+      best = i;
+    }
+  }
+  if (score >= 8) return best;
+  const h = cleaned.map((c) => c.toLowerCase());
+  for (let i = 0; i < h.length; i++) {
+    const c = h[i];
+    if (/^aprovadas$|^approved$/i.test(c.trim())) continue;
+    if (/\b(taxa|rate)\b/.test(c) && /aprov|approval|%/.test(c)) return i;
+  }
+  for (let i = 0; i < h.length; i++) {
+    const c = h[i];
+    if (/^aprovadas$/i.test(c.trim())) continue;
+    if (/taxa|aprov\.|approval.*rate|rate.*approval/i.test(c)) return i;
+  }
+  return findCol(headers, [(c) => /approval|aprov|taxa/i.test(c)]);
+}
+
+function declineVolumeColScore(name) {
+  const c = stripMarkdown(name).toLowerCase();
+  if (/^total$/i.test(c.trim())) return -5;
+  if (/%/.test(c) && !/volume|brl|perd|lost|estim/.test(c)) return -3;
+  if (/volume.*perdid|perdid.*est|vol\.\s*perd|lost.*vol|estim.*perd/i.test(c))
+    return 12;
+  if (/volume.*brl|brl.*volume/i.test(c) && /perd|lost|estim/i.test(c)) return 11;
+  if (/volume.*estim|estimad.*brl/i.test(c)) return 9;
+  if (/lost.*volume/i.test(c)) return 9;
+  if (/perdid|perdido/i.test(c) && /volume|brl|estim/i.test(c)) return 8;
+  if (/brl/i.test(c) && /estim|perd|lost/i.test(c)) return 7;
+  if (/volume/i.test(c) && !/(total|aprovado|process)/i.test(c)) return 4;
+  return -1;
+}
+
+function findDeclineLostVolumeCol(headers) {
+  let best = -1;
+  let score = -99;
+  for (let i = 0; i < headers.length; i++) {
+    const s = declineVolumeColScore(headers[i] || "");
+    if (s > score) {
+      score = s;
+      best = i;
+    }
+  }
+  return score >= 4 ? best : -1;
 }
 
 function headerLower(h) {
-  return h.map((c) => c.toLowerCase());
+  return h.map((c) => stripMarkdown(c).toLowerCase());
 }
 
 function findCol(headers, tests) {
@@ -105,20 +214,22 @@ function extractChartDataFromMarkdown(md) {
   const tables = parseMarkdownTables(md);
   let monthly = null;
   let declines = null;
+  /** @type {{ code: string; volume: number; tone: string }[]} */
+  let declineRowsAll = [];
 
   for (const t of tables) {
     if (!monthly && isMonthlyTable(t.headers)) {
       const h = t.headers;
       const mi =
-        findCol(h, [(c) => /month|mês|mes/i.test(c)]) >= 0
-          ? findCol(h, [(c) => /month|mês|mes/i.test(c)])
+        findCol(h, [(c) => /month|mês|mes/i.test(stripMarkdown(c))]) >= 0
+          ? findCol(h, [(c) => /month|mês|mes/i.test(stripMarkdown(c))])
           : 0;
       const vi = findCol(h, [
         (c) =>
-          /volume|brl|tpv|valor/i.test(c) &&
-          !/lost|perd|declin/i.test(c),
+          /volume|brl|tpv|valor/i.test(stripMarkdown(c)) &&
+          !/lost|perd|declin/i.test(stripMarkdown(c)),
       ]);
-      const ai = findCol(h, [(c) => /approval|aprov|taxa/i.test(c)]);
+      const ai = findApprovalRateCol(h);
 
       if (vi >= 0 && ai >= 0) {
         const months = [];
@@ -126,13 +237,16 @@ function extractChartDataFromMarkdown(md) {
         const approvalPct = [];
         for (const row of t.rows) {
           if (row.length < Math.max(mi, vi, ai) + 1) continue;
-          const m = row[mi] || "";
-          const v = parseNum(row[vi]);
-          const a = parsePct(row[ai]);
+          const m = stripMarkdown(row[mi] || "");
+          const v = parseMoneyCell(row[vi]);
+          const a = normalizePctValue(parsePct(row[ai]));
           if (!m || (!Number.isFinite(v) && !Number.isFinite(a))) continue;
           months.push(m.trim());
           tpv.push(Number.isFinite(v) ? v : 0);
-          approvalPct.push(Number.isFinite(a) ? a : 0);
+          const pct = Number.isFinite(a)
+            ? Math.min(100, Math.max(0, a))
+            : 0;
+          approvalPct.push(pct);
         }
         if (months.length >= 2) monthly = { months, tpv, approvalPct };
       }
@@ -140,28 +254,36 @@ function extractChartDataFromMarkdown(md) {
 
     if (!declines && isDeclineTable(t.headers)) {
       const h = t.headers;
-      let codeIdx = findCol(h, [(c) => /decline.*code|code.*decline|código/i.test(c)]);
-      if (codeIdx < 0) codeIdx = findCol(h, [(c) => /^code$/i.test(c.trim())]);
+      let codeIdx = findCol(h, [
+        (c) => /decline.*code|code.*decline|código/i.test(stripMarkdown(c)),
+      ]);
+      if (codeIdx < 0)
+        codeIdx = findCol(h, [(c) => /^code$/i.test(stripMarkdown(c).trim())]);
       if (codeIdx < 0) codeIdx = 0;
 
-      const vi = findCol(h, [
+      const vi = findDeclineLostVolumeCol(h);
+      const viFallback = findCol(h, [
         (c) =>
-          /lost|perd|estim|volume|brl/i.test(c) &&
-          !/% of total/i.test(c),
+          /lost|perd|estim|volume|brl/i.test(stripMarkdown(c)) &&
+          !/% of total/i.test(stripMarkdown(c)),
       ]);
+      const volIdx = vi >= 0 ? vi : viFallback;
 
       const ti = findCol(h, [
-        (c) => /^type$|tipo|classif|soft|hard|operac/i.test(c),
+        (c) =>
+          /^type$|tipo|classif|soft|hard|operac/i.test(stripMarkdown(c)),
       ]);
 
-      if (codeIdx >= 0 && vi >= 0) {
+      if (codeIdx >= 0 && volIdx >= 0) {
         const items = [];
         for (const row of t.rows) {
-          if (row.length <= Math.max(codeIdx, vi)) continue;
-          const code = (row[codeIdx] || "").trim();
-          const vol = parseNum(row[vi]);
+          if (row.length <= Math.max(codeIdx, volIdx)) continue;
+          const code = stripMarkdown(row[codeIdx] || "").trim();
+          const vol = parseMoneyCell(row[volIdx]);
           const typeStr =
-            ti >= 0 ? (row[ti] || "").toLowerCase() : "";
+            ti >= 0
+              ? stripMarkdown(row[ti] || "").toLowerCase()
+              : "";
           if (!code || !Number.isFinite(vol) || vol <= 0) continue;
           let tone = "operational";
           if (/soft|recuper/i.test(typeStr)) tone = "soft";
@@ -174,6 +296,7 @@ function extractChartDataFromMarkdown(md) {
         items.sort((a, b) => b.volume - a.volume);
         const top = items.slice(0, 5);
         if (top.length > 0) {
+          declineRowsAll = items;
           declines = {
             codes: top.map((x) => x.code),
             volumes: top.map((x) => x.volume),
@@ -185,16 +308,17 @@ function extractChartDataFromMarkdown(md) {
   }
 
   let impact = null;
-  if (declines && declines.volumes.length) {
-    const total = declines.volumes.reduce((a, b) => a + b, 0);
-    let maxI = 0;
-    for (let i = 1; i < declines.volumes.length; i++) {
-      if (declines.volumes[i] > declines.volumes[maxI]) maxI = i;
+  if (declineRowsAll.length > 0) {
+    const all = declineRowsAll;
+    const total = all.reduce((acc, x) => acc + x.volume, 0);
+    let maxItem = all[0];
+    for (let i = 1; i < all.length; i++) {
+      if (all[i].volume > maxItem.volume) maxItem = all[i];
     }
     impact = {
       totalDeclinedBrl: total,
-      topCode: declines.codes[maxI],
-      topBrl: declines.volumes[maxI],
+      topCode: maxItem.code,
+      topBrl: maxItem.volume,
     };
   }
 
@@ -212,13 +336,13 @@ function buildChartsSectionHtml(boot) {
   let html = '<div class="charts-dashboard">';
 
   if (boot.impact && boot.impact.totalDeclinedBrl > 0) {
-    const total = formatBrl(boot.impact.totalDeclinedBrl);
-    const top = formatBrl(boot.impact.topBrl);
-    const code = escHtml(boot.impact.topCode || "—");
+    const total = formatBrlMillions(boot.impact.totalDeclinedBrl);
+    const top = formatBrlMillions(boot.impact.topBrl);
+    const code = escHtml(stripMarkdown(boot.impact.topCode || "—"));
     html += `
     <div class="impact-card" style="page-break-inside: avoid;">
       <div class="impact-card__title">Impacto financeiro (estimado)</div>
-      <div class="impact-card__metric">Volume recusado (soma top declines)</div>
+      <div class="impact-card__metric">Volume recusado (soma da tabela de rejeições)</div>
       <div class="impact-card__value">${escHtml(total)}</div>
       <div class="impact-card__sub">Maior oportunidade de recuperação</div>
       <div class="impact-card__opp"><strong>${code}</strong> — ${escHtml(top)}</div>
@@ -266,6 +390,17 @@ function formatBrl(n) {
   } catch {
     return `R$ ${n.toFixed(0)}`;
   }
+}
+
+/** Impact card: express BRL in millions, pt-BR grouping/decimals */
+function formatBrlMillions(n) {
+  if (!Number.isFinite(n) || n <= 0) return "—";
+  const mi = n / 1e6;
+  const fmt = mi.toLocaleString("pt-BR", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  });
+  return `R$ ${fmt} mi`;
 }
 
 /** 6×6 halftone dots; element at (0,0) is the first dot; rest via box-shadow */
@@ -620,7 +755,10 @@ function buildHtmlDocument(markdownHtml, partnerName, period, chartBoot) {
             datasets: [
               {
                 label: "TPV (BRL)",
-                data: boot.monthly.tpv,
+                data: boot.monthly.tpv.map(function (x) {
+                  var n = parseFloat(x);
+                  return isFinite(n) ? n : 0;
+                }),
                 borderColor: yunoBlue,
                 backgroundColor: yunoBlueFill,
                 fill: true,
@@ -645,7 +783,12 @@ function buildHtmlDocument(markdownHtml, partnerName, period, chartBoot) {
 
       var el2 = document.getElementById("chartApproval");
       if (el2) {
-        var rates = boot.monthly.approvalPct;
+        var rates = boot.monthly.approvalPct.map(function (x) {
+          var n = parseFloat(x);
+          if (!isFinite(n)) return 0;
+          if (n > 0 && n <= 1) n = n * 100;
+          return Math.min(100, Math.max(0, n));
+        });
         var barColors = rates.map(function (v) {
           if (v < 60) return unityBlack;
           if (v > benchmark) return innovation;
@@ -657,11 +800,13 @@ function buildHtmlDocument(markdownHtml, partnerName, period, chartBoot) {
             labels: boot.monthly.months,
             datasets: [
               {
+                type: "bar",
                 label: "Approval rate %",
                 data: rates,
                 backgroundColor: barColors,
                 borderWidth: 0,
                 order: 2,
+                yAxisID: "y",
               },
               {
                 type: "line",
@@ -675,6 +820,7 @@ function buildHtmlDocument(markdownHtml, partnerName, period, chartBoot) {
                 pointRadius: 0,
                 fill: false,
                 order: 1,
+                yAxisID: "y",
               },
             ],
           },
@@ -686,8 +832,10 @@ function buildHtmlDocument(markdownHtml, partnerName, period, chartBoot) {
             },
             scales: {
               y: {
-                beginAtZero: true,
+                type: "linear",
+                min: 0,
                 max: 100,
+                beginAtZero: true,
                 ticks: axisTicks,
               },
               x: { ticks: axisTicks },
@@ -712,7 +860,10 @@ function buildHtmlDocument(markdownHtml, partnerName, period, chartBoot) {
             datasets: [
               {
                 label: "Volume perdido (BRL)",
-                data: boot.declines.volumes,
+                data: boot.declines.volumes.map(function (x) {
+                  var n = parseFloat(x);
+                  return isFinite(n) ? n : 0;
+                }),
                 backgroundColor: bg,
                 borderWidth: 0,
               },
