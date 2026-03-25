@@ -130,6 +130,13 @@ generateRouter.post("/", conditionalUpload, async (req, res, next) => {
       metrics: metricsBundle,
     });
 
+    // TEMP: remove after validating table headers against pdf.js parsers (Railway logs)
+    console.log(
+      "=== Claude reportMarkdown (temp debug) ===\n" +
+        String(reportMarkdown || "") +
+        "\n=== end reportMarkdown ==="
+    );
+
     console.log(`📄 Generating PDF...`);
     const pdfBuffer = await markdownToPdfBuffer(reportMarkdown, {
       partnerName: name,
