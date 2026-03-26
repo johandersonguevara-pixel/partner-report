@@ -453,6 +453,22 @@ export default function GeneratePage({ user, onGenerated }) {
       {hasReportLayout ? (
         <div className="generate-layout">
           <aside className="generate-sidebar">
+            <div style={{ marginBottom: 18 }}>
+              <div style={{ fontSize: 16, fontWeight: 600, color: B.black }}>
+                Olá, {user.name.split(" ")[0]} 👋
+              </div>
+              <div
+                style={{
+                  fontSize: 12,
+                  color: B.gray,
+                  marginTop: 6,
+                  lineHeight: 1.45,
+                }}
+              >
+                Configura o parceiro e os ficheiros abaixo; o relatório aparece à
+                direita em ecrã inteiro.
+              </div>
+            </div>
             <div className="generate-sidebar-bleed-head">{sidebarHead}</div>
             {renderConfigForm()}
           </aside>

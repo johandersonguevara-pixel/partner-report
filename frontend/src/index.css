@@ -54,7 +54,7 @@ body.qbr-fullscreen .app-main {
 
 .generate-layout {
   display: flex;
-  height: calc(100vh - 63px);
+  height: 100vh;
   overflow: hidden;
 }
 

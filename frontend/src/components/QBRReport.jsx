@@ -7,92 +7,9 @@ import {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
-import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  BarElement,
-  LineElement,
-  PointElement,
-  ArcElement,
-  BarController,
-  LineController,
-  DoughnutController,
-  Tooltip,
-  Legend,
-  Filler,
-} from "chart.js";
-import { Chart, Bar, Doughnut } from "react-chartjs-2";
 import { detectSensitiveData } from "../utils/sensitiveDataDetector.js";
 import { anonymizeBlock } from "../utils/anonymizer.js";
 import "./QBRReport.css";
-
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  BarElement,
-  LineElement,
-  PointElement,
-  ArcElement,
-  BarController,
-  LineController,
-  DoughnutController,
-  Tooltip,
-  Legend,
-  Filler
-);
-
-class QBRReportErrorBoundary extends Component {
-  constructor(props) {
-    super(props);
-    this.state = { hasError: false };
-  }
-
-  static getDerivedStateFromError() {
-    return { hasError: true };
-  }
-
-  componentDidCatch(error, info) {
-    console.error("QBRReport render error:", error, info?.componentStack);
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div
-          style={{
-            padding: 40,
-            color: "#282A30",
-            fontFamily: "system-ui, sans-serif",
-            maxWidth: 560,
-          }}
-        >
-          <strong>Erro ao renderizar o relatório.</strong>
-          <p style={{ marginTop: 12, fontSize: 14, lineHeight: 1.5 }}>
-            Abre o consola (F12) para ver o detalhe. Podes recarregar a página ou
-            gerar o relatório outra vez.
-          </p>
-          <button
-            type="button"
-            onClick={() => window.location.reload()}
-            style={{
-              marginTop: 16,
-              padding: "8px 16px",
-              cursor: "pointer",
-              borderRadius: 8,
-              border: "1px solid #E8EAF5",
-              background: "#F7F8FC",
-              fontWeight: 700,
-            }}
-          >
-            Recarregar
-          </button>
-        </div>
-      );
-    }
-    return this.props.children;
-  }
-}
 
 const Y = {
   blue: "#3E4FE0",
@@ -101,45 +18,61 @@ const Y = {
   green: "#E0ED80",
   lilac: "#E8EAF5",
   gray: "#92959B",
-  lightBlue: "#788CFF",
-  ok: "#3E4FE0",
-  warn: "#E0A020",
   crit: "#E24B4A",
-  bg: "#F7F8FC",
+  ok: "#3E4FE0",
 };
 
-const chartFont = { family: "'Titillium Web', sans-serif", size: 10 };
+const SLIDE_LABELS = [
+  "Visão Geral",
+  "Performance",
+  "Rejeições",
+  "Issues",
+  "Próximos Passos",
+];
 
-const commonChartOptions = {
-  responsive: true,
-  maintainAspectRatio: false,
-  plugins: {
-    legend: {
-      labels: { color: Y.gray, font: chartFont },
-    },
-    tooltip: {
-      backgroundColor: Y.black,
-      titleColor: Y.lilac,
-      bodyColor: Y.lilac,
-      padding: 10,
-    },
-  },
-};
+function getApprovalBadgeClass(rate) {
+  const r = Number(rate) || 0;
+  if (r >= 70) return "qbr-badge qbr-badge-ok";
+  if (r >= 65) return "qbr-badge qbr-badge-warn";
+  return "qbr-badge qbr-badge-crit";
+}
 
-const scaleXY = {
-  grid: { color: Y.lilac },
-  ticks: { color: Y.gray, font: chartFont },
-};
+function getApprovalColor(rate) {
+  const r = Number(rate) || 0;
+  if (r >= 70) return "#1D9E75";
+  if (r >= 65) return "#c07010";
+  return "#E24B4A";
+}
 
-function halftoneBoxShadow(cols, rows, step = 9) {
-  const parts = [];
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      if (r === 0 && c === 0) continue;
-      parts.push(`${c * step}px ${r * step}px 0 rgba(255,255,255,0.15)`);
-    }
+function getKpiTopColor(type, value) {
+  if (type === "declined") return "#E24B4A";
+  if (type === "approval") {
+    const r = parseFloat(String(value).replace(/%/g, "").replace(",", ".")) || 0;
+    if (r >= 70) return "#1D9E75";
+    if (r >= 65) return "#c07010";
+    return "#E24B4A";
   }
-  return parts.join(", ");
+  return "#3E4FE0";
+}
+
+function getPriorityClass(p) {
+  const n = Number(p) || 99;
+  if (n <= 2) return "qbr-ns-p1";
+  if (n <= 4) return "qbr-ns-p2";
+  return "qbr-ns-p3";
+}
+
+function formatNum(n) {
+  const num = parseInt(String(n).replace(/\D/g, ""), 10) || Number(n) || 0;
+  const x = Math.round(num);
+  if (x >= 1e6) return `${(x / 1e6).toFixed(1)}M`;
+  if (x >= 1e3) return `${Math.round(x / 1e3)}K`;
+  return x.toLocaleString("pt-BR");
+}
+
+function getIssueBadgeClass(priority) {
+  const map = { Highest: "highest", High: "high", Medium: "medium", Low: "low" };
+  return "qbr-badge qbr-badge-" + (map[priority] || "low");
 }
 
 function parsePctFromString(s) {
@@ -157,10 +90,15 @@ function parsePctFromString(s) {
   return Number.isFinite(v) ? v : NaN;
 }
 
-/** Nome do merchant a partir de várias chaves (IA, CSV PT/EN). */
+function parsePctNum(v) {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  const p = parsePctFromString(v);
+  return Number.isFinite(p) ? p : 0;
+}
+
 function resolveMerchantName(m) {
   if (!m || typeof m !== "object") return "";
-  const v =
+  const x =
     m.name ??
     m.merchant ??
     m.Merchant ??
@@ -169,68 +107,7 @@ function resolveMerchantName(m) {
     m.organizationName ??
     m["Organization Name"] ??
     m["Nome da organização"];
-  return String(v ?? "").trim();
-}
-
-function formatNumTable(n) {
-  const num = Math.round(Number(n)) || 0;
-  if (num >= 1e6) return `${(num / 1e6).toFixed(1)}M`;
-  if (num >= 1e3) return `${Math.round(num / 1e3)}K`;
-  return num.toLocaleString("pt-BR");
-}
-
-function formatBRLTotal(n) {
-  const num = Number(n) || 0;
-  if (num >= 1e9) return `R$ ${(num / 1e9).toFixed(1)}B`;
-  if (num >= 1e6) return `R$ ${(num / 1e6).toFixed(1)}M`;
-  if (num >= 1e3) return `R$ ${(num / 1e3).toFixed(1)}K`;
-  return `R$ ${num.toFixed(0)}`;
-}
-
-function getApprovalStyle(rate) {
-  const r = Number(rate) || 0;
-  if (r >= 75) return { bg: "#EEF5FF", text: "#1726A6", bar: "#1726A6" };
-  if (r >= 65) return { bg: "#FFF8E6", text: "#c07010", bar: "#c07010" };
-  return { bg: "#FEF0F0", text: "#E24B4A", bar: "#E24B4A" };
-}
-
-function merchantStatusMeta(rate) {
-  const r = Number(rate) || 0;
-  if (r >= 75) return { label: "Saudável", color: "#1D9E75" };
-  if (r >= 65) return { label: "Atenção", color: "#c07010" };
-  return { label: "Alerta", color: "#E24B4A" };
-}
-
-function approvalKpiStatus(pct) {
-  if (!Number.isFinite(pct)) return "ok";
-  if (pct < 65) return "crit";
-  if (pct < 70) return "warn";
-  return "ok";
-}
-
-function statusBorder(c) {
-  if (c === "crit") return Y.crit;
-  if (c === "warn") return Y.warn;
-  return Y.ok;
-}
-
-function statusDeltaColor(c) {
-  return statusBorder(c);
-}
-
-function normalizeCategory(cat) {
-  const x = String(cat || "").toLowerCase();
-  if (x.includes("urg")) return "urgente";
-  if (x.includes("tecn") || x.includes("tech")) return "tecnico";
-  if (x.includes("comerc") || x.includes("commercial")) return "comercial";
-  return x;
-}
-
-function priorityStyle(p) {
-  const n = Number(p) || 99;
-  if (n <= 2) return { bg: "#fef2f2", c: "#dc2626" };
-  if (n <= 4) return { bg: "#fffbeb", c: "#d97706" };
-  return { bg: "#eff6ff", c: "#2563eb" };
+  return String(x ?? "").trim();
 }
 
 function parseMagnitudeRough(str) {
@@ -248,54 +125,21 @@ function parseMagnitudeRough(str) {
   return (Number.isFinite(v) ? v : 0) * mult;
 }
 
-function parseCountRough(str) {
-  if (str == null || str === "") return 0;
-  const m = String(str).replace(/[^\d.,]/g, " ").match(/[\d.,]+/);
-  if (!m) return 0;
-  let n = m[0];
-  if (n.includes(",") && n.includes(".")) {
-    if (n.lastIndexOf(",") > n.lastIndexOf("."))
-      n = n.replace(/\./g, "").replace(",", ".");
-    else n = n.replace(/,/g, "");
-  } else if (n.includes(",")) n = n.replace(",", ".");
-  const v = parseFloat(n);
-  return Number.isFinite(v) ? Math.round(v) : 0;
+function formatRecoverableLabel(total) {
+  if (!total || total <= 0) return "~R$ — potencial";
+  if (total >= 1e9) return `~R$ ${(total / 1e9).toFixed(1)}B potencial`;
+  if (total >= 1e6) return `~R$ ${(total / 1e6).toFixed(0)}M potencial`;
+  if (total >= 1e3) return `~R$ ${(total / 1e3).toFixed(0)}K potencial`;
+  return `~R$ ${total.toFixed(0)} potencial`;
 }
 
-function declineTypeColor(t) {
+function declineBadgeType(t) {
   const x = String(t || "").toLowerCase();
-  if (x.includes("soft")) return Y.lightBlue;
-  if (x.includes("hard")) return Y.black;
-  return "#E0A020";
+  if (x.includes("soft")) return "soft";
+  if (x.includes("hard")) return "hard";
+  return "op";
 }
 
-function HighlightedOriginal({ text, matches }) {
-  if (text == null || text === "") return "—";
-  const t = String(text);
-  if (!matches?.length) return t;
-  const sorted = [...matches].sort((a, b) => a.startIndex - b.startIndex);
-  const parts = [];
-  let last = 0;
-  sorted.forEach((m, idx) => {
-    if (m.startIndex > last) {
-      parts.push(
-        <span key={`p-${idx}-${last}`}>{t.slice(last, m.startIndex)}</span>
-      );
-    }
-    parts.push(
-      <mark key={`h-${m.startIndex}`} className="qbr-sens-highlight">
-        {t.slice(m.startIndex, m.endIndex)}
-      </mark>
-    );
-    last = m.endIndex;
-  });
-  if (last < t.length) {
-    parts.push(<span key="tail">{t.slice(last)}</span>);
-  }
-  return <>{parts}</>;
-}
-
-/** Desembrulha { report } / { data } e normaliza shape comum da API. */
 function unwrapReportPayload(raw) {
   if (!raw || typeof raw !== "object") return {};
   if (raw.report && typeof raw.report === "object") return raw.report;
@@ -315,30 +159,143 @@ function normalizeKpis(raw) {
   };
 }
 
-function QBRReportInner({ report: rawReport, meta }) {
-  useEffect(() => {
-    if (rawReport == null) return;
-    try {
-      console.log("QBR REPORT PROP:", JSON.stringify(rawReport, null, 2));
-    } catch (e) {
-      console.log("QBR REPORT PROP:", rawReport, e);
+function halftoneBoxShadow(cols, rows, step = 9) {
+  const parts = [];
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      if (r === 0 && c === 0) continue;
+      parts.push(`${c * step}px ${r * step}px 0 rgba(255,255,255,0.15)`);
     }
-  }, [rawReport]);
+  }
+  return parts.join(", ");
+}
 
-  if (rawReport == null) {
-    return (
-      <div style={{ padding: 40, color: "#282A30" }}>
-        Aguardando dados do relatório...
-      </div>
+function normalizeCategory(cat) {
+  const x = String(cat || "").toLowerCase();
+  if (x.includes("urg")) return "urgente";
+  if (x.includes("tecn") || x.includes("tech")) return "tecnico";
+  if (x.includes("comerc") || x.includes("commercial")) return "comercial";
+  return x;
+}
+
+function priorityStyle(p) {
+  const n = Number(p) || 99;
+  if (n <= 2) return { bg: "#fef2f2", c: "#dc2626" };
+  if (n <= 4) return { bg: "#fffbeb", c: "#d97706" };
+  return { bg: "#eff6ff", c: "#2563eb" };
+}
+
+function HighlightedOriginal({ text, matches }) {
+  if (text == null || text === "") return "—";
+  const t = String(text);
+  if (!matches?.length) return t;
+  const sorted = [...matches].sort((a, b) => a.startIndex - b.startIndex);
+  const parts = [];
+  let last = 0;
+  sorted.forEach((m, idx) => {
+    if (m.startIndex > last) {
+      parts.push(<span key={`p-${idx}-${last}`}>{t.slice(last, m.startIndex)}</span>);
+    }
+    parts.push(
+      <mark key={`h-${m.startIndex}`} className="qbr-sens-highlight">
+        {t.slice(m.startIndex, m.endIndex)}
+      </mark>
     );
+    last = m.endIndex;
+  });
+  if (last < t.length) parts.push(<span key="tail">{t.slice(last)}</span>);
+  return <>{parts}</>;
+}
+
+function SlideHeader({ partner, period, generatedAt }) {
+  let dateStr = "—";
+  try {
+    const d = new Date(generatedAt);
+    if (!Number.isNaN(d.getTime())) dateStr = d.toLocaleDateString("pt-BR");
+  } catch {
+    /* ignore */
+  }
+  return (
+    <div className="qbr-slide-header">
+      <div className="qbr-slide-header-dots">
+        {Array.from({ length: 40 }).map((_, i) => (
+          <div key={i} className="qbr-slide-header-dot" />
+        ))}
+      </div>
+      <div className="qbr-slide-header-left">
+        <div className="qbr-slide-header-bar" />
+        <div>
+          <div className="qbr-slide-header-eyebrow">QBR · {period}</div>
+          <div className="qbr-slide-header-partner">{partner}</div>
+        </div>
+      </div>
+      <div className="qbr-slide-header-right">
+        Yuno Partner Intelligence · {dateStr}
+      </div>
+    </div>
+  );
+}
+
+function DetailPanel({ id, open, onToggle, label, children }) {
+  return (
+    <>
+      <button
+        type="button"
+        className={`qbr-see-btn${open ? " open" : ""}`}
+        onClick={() => onToggle(id)}
+      >
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+          <path
+            d="M2 4l4 4 4-4"
+            stroke="#3E4FE0"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+        {label}
+      </button>
+      <div className={`qbr-detail-panel${open ? " open" : ""}`}>{children}</div>
+    </>
+  );
+}
+
+class QBRReportErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error, info) {
+    console.error("QBRReport render error:", error, info?.componentStack);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="qbr-narrative">
+          <strong>Erro ao renderizar o relatório.</strong> Recarrega a página ou gera
+          de novo.
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+function QBRReportInner({ report: rawReport, meta }) {
+  if (rawReport == null) {
+    return <div className="qbr-narrative">Aguardando dados do relatório...</div>;
   }
 
   const report = unwrapReportPayload(rawReport);
-  const kpisRaw = report?.kpis || {};
-  const kpis = normalizeKpis(kpisRaw);
+  const kpis = normalizeKpis(report?.kpis || {});
 
-  const partnerName =
-    report?.partner ?? meta?.partnerName ?? "Partner";
+  const partnerName = report?.partner ?? meta?.partnerName ?? "Partner";
   const period = report?.period ?? meta?.period ?? "—";
   const generatedAt =
     report?.generatedAt ??
@@ -347,10 +304,17 @@ function QBRReportInner({ report: rawReport, meta }) {
     new Date().toISOString();
   const genLabel = new Date(generatedAt).toLocaleString("pt-BR");
 
-  const [activeTab, setActiveTab] = useState("overview");
+  const [currentSlide, setCurrentSlide] = useState(0);
+  const [openDetails, setOpenDetails] = useState({
+    monthly: false,
+    merchants: false,
+    declines: false,
+    issues: false,
+    nextsteps: false,
+  });
+
   const [showExport, setShowExport] = useState(false);
   const [filterCat, setFilterCat] = useState("all");
-  const [showAllIssueTickets, setShowAllIssueTickets] = useState(false);
   const [showReview, setShowReview] = useState(false);
   const [reviewBlocks, setReviewBlocks] = useState([]);
   const [allReviewed, setAllReviewed] = useState(false);
@@ -391,31 +355,18 @@ function QBRReportInner({ report: rawReport, meta }) {
     );
   }, [reviewBlocks]);
 
-  const monthlyRaw =
-    report?.monthlyPerformance ||
-    report?.monthly_performance ||
-    [];
-  const monthly = useMemo(() => {
-    const arr = Array.isArray(monthlyRaw) ? monthlyRaw : [];
-    const iso = arr.filter((r) =>
-      /^\d{4}-\d{2}$/.test(String(r?.month ?? "").trim())
-    );
-    if (iso.length > 0) return iso;
-    return arr.filter((r) => String(r?.month ?? "").trim().length > 0);
-  }, [monthlyRaw]);
+  useEffect(() => {
+    const handler = (e) => {
+      if (showExport || showReview) return;
+      if (e.key === "ArrowRight") setCurrentSlide((c) => Math.min(c + 1, 4));
+      if (e.key === "ArrowLeft") setCurrentSlide((c) => Math.max(c - 1, 0));
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [showExport, showReview]);
 
-  const paymentMethodsRaw =
-    report?.paymentMethods || report?.payment_methods || [];
-  const paymentMethods = useMemo(() => {
-    const arr = Array.isArray(paymentMethodsRaw) ? paymentMethodsRaw : [];
-    return arr.map((p) => ({
-      ...p,
-      method: p?.method ?? p?.name ?? p?.payment_method ?? "—",
-      approvalRate: p?.approvalRate ?? p?.approval_rate ?? p?.rate,
-      volume: p?.volume ?? p?.total_volume,
-      status: p?.status ?? p?.health,
-    }));
-  }, [paymentMethodsRaw]);
+  const monthlyPerformance =
+    report?.monthlyPerformance ?? report?.monthly_performance ?? [];
 
   const merchantsBlock =
     report?.merchants && typeof report.merchants === "object"
@@ -423,20 +374,49 @@ function QBRReportInner({ report: rawReport, meta }) {
       : null;
   const highlights = Array.isArray(merchantsBlock?.highlights)
     ? merchantsBlock.highlights
-    : Array.isArray(report?.merchant_highlights)
-      ? report.merchant_highlights
-      : [];
+    : [];
   const alerts = Array.isArray(merchantsBlock?.alerts)
     ? merchantsBlock.alerts
-    : Array.isArray(report?.merchant_alerts)
-      ? report.merchant_alerts
-      : [];
+    : [];
+
+  const merchantInsights =
+    report?.merchantInsights &&
+    typeof report.merchantInsights === "object"
+      ? report.merchantInsights
+      : { highlights: [], alerts: [] };
+  const miHigh =
+    Array.isArray(merchantInsights.highlights) &&
+    merchantInsights.highlights.length > 0
+      ? merchantInsights.highlights
+      : highlights;
+  const miAlerts =
+    Array.isArray(merchantInsights.alerts) && merchantInsights.alerts.length > 0
+      ? merchantInsights.alerts
+      : alerts;
 
   const merchantRanking = Array.isArray(report?.merchantRanking)
     ? report.merchantRanking
     : Array.isArray(report?.merchant_ranking)
       ? report.merchant_ranking
       : [];
+
+  const merchantsFullList = useMemo(() => {
+    return [...merchantRanking].sort(
+      (a, b) => (Number(b.volumeRaw) || 0) - (Number(a.volumeRaw) || 0)
+    );
+  }, [merchantRanking]);
+
+  const merchantsTotals = useMemo(() => {
+    let sumTx = 0;
+    let sumAp = 0;
+    for (const m of merchantsFullList) {
+      sumTx += Math.round(Number(m.totalTxns)) || 0;
+      sumAp += Math.round(Number(m.approved)) || 0;
+    }
+    const pctW =
+      sumTx > 0 ? ((sumAp / sumTx) * 100).toFixed(1) : null;
+    return { sumTx, sumAp, pctW };
+  }, [merchantsFullList]);
 
   const declineCodesRaw = report?.declineCodes || report?.decline_codes || [];
   const declineCodes = useMemo(() => {
@@ -446,432 +426,60 @@ function QBRReportInner({ report: rawReport, meta }) {
       code: d?.code ?? d?.decline_code ?? d?.Code,
       total: d?.total ?? d?.count,
       pctOfDeclines:
-        Number(
-          d?.pctOfDeclines ?? d?.pct_of_declines ?? d?.pct ?? d?.percentage
-        ) || 0,
-      estimatedLostVolume:
-        d?.estimatedLostVolume ?? d?.estimated_lost_volume,
+        Number(d?.pctOfDeclines ?? d?.pct_of_declines ?? d?.pct ?? d?.percentage) ||
+        0,
+      estimatedLostVolume: d?.estimatedLostVolume ?? d?.estimated_lost_volume,
       type: d?.type ?? d?.category,
+      action: d?.action ?? d?.response_message,
     }));
   }, [declineCodesRaw]);
 
+  const declineInsights = Array.isArray(report?.declineInsights)
+    ? report.declineInsights
+    : [];
+
+  const recoverableVolume = useMemo(() => {
+    return declineCodes.reduce((s, d) => {
+      const t = String(d.type ?? "").toLowerCase();
+      if (t.includes("hard")) return s;
+      return s + parseMagnitudeRough(d.estimatedLostVolume);
+    }, 0);
+  }, [declineCodes]);
+
   const trendAnalysisText =
     report?.trendAnalysis ?? report?.trend_analysis ?? "";
+
+  const issuesData = report?.issuesData ?? report?.issues_data ?? null;
+  const issuesAnalysisRaw =
+    report?.issuesAnalysis ?? report?.issues_analysis ?? null;
+  const issuesAnalysis = issuesAnalysisRaw
+    ? {
+        ...issuesAnalysisRaw,
+        summary: issuesAnalysisRaw.summary ?? issuesAnalysisRaw.issues_summary,
+        connectionToMetrics:
+          issuesAnalysisRaw.connectionToMetrics ??
+          issuesAnalysisRaw.connection_to_metrics,
+      }
+    : null;
+
   const top3Opportunities =
     report?.top3Opportunities ?? report?.top_3_opportunities ?? [];
 
-  const issuesData = report?.issuesData ?? report?.issues_data ?? null;
-  const issuesAnalysis =
-    report?.issuesAnalysis ?? report?.issues_analysis ?? null;
-  const issuesSummaryText =
-    issuesAnalysis?.summary ?? issuesAnalysis?.issues_summary ?? "";
-  const issuesMetricsLinkText =
-    issuesAnalysis?.connectionToMetrics ??
-    issuesAnalysis?.connection_to_metrics ??
-    "";
+  const approvalPctGlobal = parsePctNum(kpis?.approvalRate);
 
-  const issuesCriticalRows = useMemo(() => {
-    const ai =
-      issuesAnalysis?.criticalOpen ?? issuesAnalysis?.critical_open;
-    if (Array.isArray(ai) && ai.length > 0) {
-      return ai.map((row) => ({
-        ticket: row.ticket ?? "—",
-        problem: row.problem ?? "—",
-        impact: row.impact ?? "—",
-        merchant: row.merchant ?? row.Merchant ?? "—",
-        priority: row.priority ?? "—",
-        suggestedAction:
-          row.suggestedAction ?? row.suggested_action ?? "—",
-        isOpen: true,
-        closed: false,
-      }));
-    }
-    if (!issuesData?.openTickets?.length) return [];
-    return issuesData.openTickets
-      .filter((t) => t.priority === "Highest" || t.priority === "High")
-      .map((t) => ({
-        ticket: t.ticket,
-        problem: t.problem,
-        impact: t.impact,
-        merchant: t.merchant,
-        priority: t.priority,
-        suggestedAction: "—",
-        isOpen: true,
-        closed: false,
-      }));
-  }, [issuesAnalysis, issuesData]);
-
-  const allIssueTickets = useMemo(() => {
-    if (!issuesData) return [];
-    return [
-      ...(issuesData.openTickets || []),
-      ...(issuesData.closedTickets || []),
-    ];
-  }, [issuesData]);
-
-  const approvalPctGlobal = parsePctFromString(kpis?.approvalRate);
-  const apprStatus = approvalKpiStatus(approvalPctGlobal);
-
-  const debitMethod = useMemo(() => {
-    return (
-      paymentMethods.find((p) =>
-        /débito|debit/i.test(String(p?.method ?? ""))
-      ) ?? null
-    );
-  }, [paymentMethods]);
-  const debitPct = debitMethod
-    ? Number(debitMethod.approvalRate)
-    : NaN;
-  const debitStatus = Number.isFinite(debitPct)
-    ? debitPct < 20
-      ? "crit"
-      : debitPct < 40
+  const apprStatus =
+    !Number.isFinite(approvalPctGlobal) || approvalPctGlobal >= 70
+      ? "ok"
+      : approvalPctGlobal >= 65
         ? "warn"
-        : "ok"
-    : "ok";
+        : "crit";
 
-  const merchantCount =
-    highlights.length + alerts.length > 0
-      ? highlights.length + alerts.length
-      : merchantRanking.length;
+  const statusBorder =
+    apprStatus === "crit" ? Y.crit : apprStatus === "warn" ? "#c07010" : Y.ok;
 
-  const kpiStrip = useMemo(
-    () => [
-      {
-        key: "tpv",
-        label: "Total TPV",
-        value: kpis?.totalTPV ?? "—",
-        delta: kpis?.tpvGrowth ?? "",
-        status: "ok",
-      },
-      {
-        key: "tx",
-        label: "Transações",
-        value: kpis?.totalTransactions ?? "—",
-        delta: "",
-        status: "ok",
-      },
-      {
-        key: "appr",
-        label: "Approval rate",
-        value: kpis?.approvalRate ?? "—",
-        delta: "",
-        status: apprStatus,
-      },
-      {
-        key: "decl",
-        label: "Vol. recusado",
-        value: kpis?.declinedVolume ?? "—",
-        delta: "",
-        status: "crit",
-      },
-      {
-        key: "debit",
-        label: "Débito",
-        value: debitMethod
-          ? `${debitMethod.approvalRate ?? "—"}%`
-          : "—",
-        delta: debitMethod?.volume ?? "",
-        status: debitMethod ? debitStatus : "ok",
-      },
-      {
-        key: "merch",
-        label: "Merchants",
-        value: merchantCount ? String(merchantCount) : "—",
-        delta: "destaques + alertas",
-        status: "ok",
-      },
-    ],
-    [kpis, apprStatus, debitMethod, debitStatus, merchantCount]
-  );
-
-  const mergedMerchants = useMemo(() => {
-    const rateFrom = (x) => {
-      if (typeof x?.approvalRate === "number" && Number.isFinite(x.approvalRate)) {
-        return x.approvalRate;
-      }
-      const p = parsePctFromString(x?.approvalRate);
-      return Number.isFinite(p) ? p : 0;
-    };
-    const labelFrom = (x) => {
-      const ar = x?.approvalRate;
-      if (ar == null || ar === "") return "—";
-      if (typeof ar === "number") return `${ar}%`;
-      return String(ar);
-    };
-
-    const rows = [];
-    for (const h of highlights) {
-      const rate = rateFrom(h);
-      rows.push({
-        name: resolveMerchantName(h) || "—",
-        rate,
-        label: labelFrom(h),
-        volume: h?.volume ?? h?.totalVolume ?? "—",
-        kind: "hi",
-      });
-    }
-    for (const a of alerts) {
-      const rate = rateFrom(a);
-      rows.push({
-        name: resolveMerchantName(a) || "—",
-        rate,
-        label: labelFrom(a),
-        volume: a?.volume ?? a?.totalVolume ?? "—",
-        kind: "al",
-      });
-    }
-    rows.sort((a, b) => b.rate - a.rate);
-
-    const hasNamedRow = rows.some((r) => r.name && r.name !== "—");
-    if (hasNamedRow && rows.length > 0) return rows;
-
-    if (!merchantRanking.length) return rows;
-
-    return merchantRanking
-      .map((m) => {
-        const rate =
-          typeof m.approvalRate === "number" && Number.isFinite(m.approvalRate)
-            ? m.approvalRate
-            : parsePctFromString(m.approvalRate);
-        const r = Number.isFinite(rate) ? rate : 0;
-        return {
-          name: resolveMerchantName(m) || String(m.name ?? "").trim() || "—",
-          rate: r,
-          label:
-            typeof m.approvalRate === "number"
-              ? `${m.approvalRate}%`
-              : String(m.approvalRate ?? (r ? `${r.toFixed(1)}%` : "—")),
-          volume: m.volume ?? "—",
-          kind: "rank",
-        };
-      })
-      .sort((a, b) => b.rate - a.rate);
-  }, [highlights, alerts, merchantRanking]);
-
-  const merchantsTableRows = useMemo(() => {
-    return [...merchantRanking]
-      .map((m) => {
-        const rateRaw =
-          typeof m.approvalRate === "number" && Number.isFinite(m.approvalRate)
-            ? m.approvalRate
-            : parsePctFromString(m.approvalRate);
-        const rate = Number.isFinite(rateRaw) ? rateRaw : 0;
-        const volRaw = Number(m.volumeRaw) || 0;
-        const totalTxns = Math.round(Number(m.totalTxns)) || 0;
-        const approved = Math.round(Number(m.approved)) || 0;
-        return {
-          ...m,
-          _name: resolveMerchantName(m) || String(m.name ?? "").trim() || "—",
-          _rate: rate,
-          _volumeRaw: volRaw,
-          _totalTxns: totalTxns,
-          _approved: approved,
-          _volumeDisp: m.volume ?? "—",
-          _ticketDisp: m.avgTicket ?? "—",
-        };
-      })
-      .sort((a, b) => b._volumeRaw - a._volumeRaw);
-  }, [merchantRanking]);
-
-  const merchantsTableTotals = useMemo(() => {
-    if (!merchantsTableRows.length) return null;
-    let sumTx = 0;
-    let sumAp = 0;
-    let sumVol = 0;
-    for (const r of merchantsTableRows) {
-      sumTx += r._totalTxns;
-      sumAp += r._approved;
-      sumVol += r._volumeRaw;
-    }
-    const pct =
-      sumTx > 0 ? ((sumAp / sumTx) * 100).toFixed(1) : null;
-    return { sumTx, sumAp, sumVol, pct };
-  }, [merchantsTableRows]);
-
-  function merchantDotColor(rate) {
-    if (rate >= 75) return Y.blue;
-    if (rate >= 65) return Y.warn;
-    return Y.crit;
-  }
-
-  const approvalChartData = useMemo(() => {
-    const labels = monthly.map((r) => String(r.month ?? ""));
-    const rates = monthly.map((r) =>
-      Math.min(
-        100,
-        Math.max(
-          0,
-          Number(r.approvalRate ?? r.approval_rate ?? r.rate) || 0
-        )
-      )
-    );
-    const barColors = rates.map((v) =>
-      v > 70 ? Y.blue : Y.gray
-    );
-    const bench = labels.map(() => 70);
-    return {
-      labels,
-      datasets: [
-        {
-          type: "bar",
-          label: "Taxa aprovação %",
-          data: rates,
-          backgroundColor: barColors,
-          borderRadius: 4,
-          order: 2,
-        },
-        {
-          type: "line",
-          label: "Benchmark 70%",
-          data: bench,
-          borderColor: Y.green,
-          borderDash: [6, 6],
-          borderWidth: 2,
-          pointRadius: 0,
-          fill: false,
-          order: 1,
-        },
-      ],
-    };
-  }, [monthly]);
-
-  const approvalChartOptions = useMemo(
-    () => ({
-      ...commonChartOptions,
-      scales: {
-        x: scaleXY,
-        y: {
-          ...scaleXY,
-          min: 0,
-          max: 100,
-          grid: {
-            color: (ctx) =>
-              ctx.tick?.value === 70 ? Y.green : Y.lilac,
-            lineWidth: (ctx) => (ctx.tick?.value === 70 ? 2 : 1),
-          },
-        },
-      },
-    }),
-    []
-  );
-
-  const paymentChartData = useMemo(() => {
-    const labels = paymentMethods.map((p) => p.method ?? "—");
-    const data = paymentMethods.map((p) => Number(p.approvalRate) || 0);
-    const colors = paymentMethods.map((p) => {
-      const s = String(p.status ?? "").toLowerCase();
-      if (s === "critical") return Y.crit;
-      if (s === "attention") return Y.warn;
-      return Y.blue;
-    });
-    return {
-      labels,
-      datasets: [
-        {
-          label: "Taxa aprovação %",
-          data,
-          backgroundColor: colors,
-          borderRadius: 4,
-        },
-      ],
-    };
-  }, [paymentMethods]);
-
-  const tpvChartData = useMemo(() => {
-    const labels = monthly.map((r) => r.month ?? "");
-    const data = monthly.map((r) =>
-      parseMagnitudeRough(r.totalVolume ?? r.total_volume)
-    );
-    return {
-      labels,
-      datasets: [
-        {
-          label: "TPV",
-          data,
-          backgroundColor: Y.blue,
-          borderRadius: 4,
-        },
-      ],
-    };
-  }, [monthly]);
-
-  const txnChartData = useMemo(() => {
-    const labels = monthly.map((r) => r.month ?? "");
-    const data = monthly.map((r) =>
-      parseCountRough(r.transactions ?? r.transaction_count)
-    );
-    return {
-      labels,
-      datasets: [
-        {
-          label: "Transações",
-          data,
-          backgroundColor: Y.darkBlue,
-          borderRadius: 4,
-        },
-      ],
-    };
-  }, [monthly]);
-
-  const doughnutData = useMemo(() => {
-    const top = [...declineCodes]
-      .sort(
-        (a, b) =>
-          (Number(b.pctOfDeclines) || 0) - (Number(a.pctOfDeclines) || 0)
-      )
-      .slice(0, 6);
-    return {
-      labels: top.map((d) => d.code ?? "—"),
-      datasets: [
-        {
-          data: top.map((d) => Number(d.pctOfDeclines) || 0),
-          backgroundColor: top.map((d) => declineTypeColor(d.type)),
-          borderWidth: 1,
-          borderColor: "#fff",
-        },
-      ],
-    };
-  }, [declineCodes]);
-
-  const declineBarData = useMemo(() => {
-    const top = [...declineCodes]
-      .sort(
-        (a, b) =>
-          (Number(b.pctOfDeclines) || 0) - (Number(a.pctOfDeclines) || 0)
-      )
-      .slice(0, 8);
-    return {
-      labels: top.map((d) => d.code ?? "—"),
-      datasets: [
-        {
-          label: "% rejeições",
-          data: top.map((d) => Number(d.pctOfDeclines) || 0),
-          backgroundColor: top.map((d) => declineTypeColor(d.type)),
-          borderRadius: 4,
-        },
-      ],
-    };
-  }, [declineCodes]);
-
-  const declineAgg = useMemo(() => {
-    let soft = 0,
-      hard = 0,
-      op = 0;
-    for (const d of declineCodes) {
-      const t = String(d.type ?? "").toLowerCase();
-      const v = parseMagnitudeRough(d.estimatedLostVolume);
-      if (t.includes("soft")) soft += v;
-      else if (t.includes("hard")) hard += v;
-      else op += v;
-    }
-    return { soft, hard, op };
-  }, [declineCodes]);
-
-  const declinedTxSum = useMemo(
-    () => declineCodes.reduce((a, d) => a + parseCountRough(d.total), 0),
-    [declineCodes]
-  );
+  const toggleOpenDetail = useCallback((id) => {
+    setOpenDetails((p) => ({ ...p, [id]: !p[id] }));
+  }, []);
 
   const toggleStep = useCallback((id) => {
     setSelectedSteps((prev) => {
@@ -901,9 +509,7 @@ function QBRReportInner({ report: rawReport, meta }) {
 
   const runPrint = useCallback(() => {
     requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        window.print();
-      });
+      requestAnimationFrame(() => window.print());
     });
   }, []);
 
@@ -1010,11 +616,13 @@ function QBRReportInner({ report: rawReport, meta }) {
 
   const printHalftone = useMemo(() => halftoneBoxShadow(7, 5, 8), []);
 
-  const topOpp =
-    top3Opportunities[0]?.lostVolume ??
-    top3Opportunities[0]?.lost_volume ??
-    kpis?.topOpportunity ??
-    "—";
+  const allIssueTickets = useMemo(() => {
+    if (!issuesData) return [];
+    return [
+      ...(issuesData.openTickets || []),
+      ...(issuesData.closedTickets || []),
+    ];
+  }, [issuesData]);
 
   const printPortal = createPortal(
     <div id="qbr-print-document">
@@ -1046,21 +654,15 @@ function QBRReportInner({ report: rawReport, meta }) {
         </header>
 
         <div className="qbr-print-kpis">
-          <div
-            className="qbr-card"
-            style={{ margin: 0, borderTop: `3px solid ${Y.ok}` }}
-          >
+          <div className="qbr-card" style={{ borderTopColor: Y.ok }}>
             <div className="qbr-kpi-label">Total TPV</div>
             <div className="qbr-kpi-value">
               {typeof kpis?.totalTPV === "string"
                 ? getValueForPrint("kpis", "totalTPV", kpis.totalTPV)
-                : kpis?.totalTPV ?? "—"}
+                : (kpis?.totalTPV ?? "—")}
             </div>
           </div>
-          <div
-            className="qbr-card"
-            style={{ margin: 0, borderTop: `3px solid ${Y.ok}` }}
-          >
+          <div className="qbr-card" style={{ borderTopColor: Y.ok }}>
             <div className="qbr-kpi-label">Transações</div>
             <div className="qbr-kpi-value">
               {typeof kpis?.totalTransactions === "string"
@@ -1069,32 +671,23 @@ function QBRReportInner({ report: rawReport, meta }) {
                     "totalTransactions",
                     kpis.totalTransactions
                   )
-                : kpis?.totalTransactions ?? "—"}
+                : (kpis?.totalTransactions ?? "—")}
             </div>
           </div>
-          <div
-            className="qbr-card"
-            style={{
-              margin: 0,
-              borderTop: `3px solid ${statusBorder(apprStatus)}`,
-            }}
-          >
+          <div className="qbr-card" style={{ borderTopColor: statusBorder }}>
             <div className="qbr-kpi-label">Approval rate</div>
             <div className="qbr-kpi-value">
               {typeof kpis?.approvalRate === "string"
                 ? getValueForPrint("kpis", "approvalRate", kpis.approvalRate)
-                : kpis?.approvalRate ?? "—"}
+                : (kpis?.approvalRate ?? "—")}
             </div>
           </div>
-          <div
-            className="qbr-card"
-            style={{ margin: 0, borderTop: `3px solid ${Y.crit}` }}
-          >
+          <div className="qbr-card" style={{ borderTopColor: Y.crit }}>
             <div className="qbr-kpi-label">Volume recusado</div>
             <div className="qbr-kpi-value">
               {typeof kpis?.declinedVolume === "string"
                 ? getValueForPrint("kpis", "declinedVolume", kpis.declinedVolume)
-                : kpis?.declinedVolume ?? "—"}
+                : (kpis?.declinedVolume ?? "—")}
             </div>
           </div>
         </div>
@@ -1104,7 +697,7 @@ function QBRReportInner({ report: rawReport, meta }) {
           <div style={{ fontSize: 18, fontWeight: 800, marginTop: 8 }}>
             {typeof kpis?.declinedVolume === "string"
               ? getValueForPrint("kpis", "declinedVolume", kpis.declinedVolume)
-              : kpis?.declinedVolume ?? "—"}
+              : (kpis?.declinedVolume ?? "—")}
           </div>
           <div className="qbr-impact-accent" style={{ marginTop: 12 }}>
             Oportunidade
@@ -1163,10 +756,7 @@ function QBRReportInner({ report: rawReport, meta }) {
           Manager antes da apresentação ao parceiro.
         </div>
 
-        <footer
-          className="qbr-footer"
-          style={{ marginTop: 28, borderRadius: 8 }}
-        >
+        <footer className="qbr-footer" style={{ marginTop: 28, borderRadius: 8 }}>
           <span style={{ fontWeight: 800 }}>yuno</span>
           <span style={{ color: Y.gray }}>{genLabel}</span>
           <span style={{ color: Y.green, fontWeight: 700 }}>www.y.uno</span>
@@ -1179,1284 +769,980 @@ function QBRReportInner({ report: rawReport, meta }) {
   return (
     <>
       <div className="qbr-root">
-        <div className="qbr-wrap">
-          {!showExport ? (
-            <div className="qbr-shell">
-              <header className="qbr-topbar">
-                <span className="qbr-logo">yuno</span>
-                <span className="qbr-badge qbr-badge--partner">{partnerName}</span>
-                <span className="qbr-badge qbr-badge--period">{period}</span>
-                <div className="qbr-topbar-spacer" />
-                <button
-                  type="button"
-                  className="qbr-btn-export-trigger"
-                  onClick={() => setShowExport(true)}
-                >
-                  Gerar relatório
-                </button>
-              </header>
-
-              <nav className="qbr-tabs" aria-label="Seções do relatório">
-                {[
-                  ["overview", "Visão Geral"],
-                  ["performance", "Performance"],
-                  ["merchants", "Merchants"],
-                  ["declines", "Rejeições"],
-                  ["issues", "Issues"],
-                  ["nextsteps", "Próximos Passos"],
-                ].map(([id, label]) => (
-                  <button
-                    key={id}
-                    type="button"
-                    className={`qbr-tab ${activeTab === id ? "qbr-tab--active" : ""}`}
-                    onClick={() => setActiveTab(id)}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </nav>
-
-              <div className="qbr-kpi-strip">
-                {kpiStrip.map((k) => (
-                  <div
-                    key={k.key}
-                    className="qbr-kpi-cell"
-                    style={{ borderTopColor: statusBorder(k.status) }}
-                  >
-                    <div className="qbr-kpi-label">{k.label}</div>
-                    <div className="qbr-kpi-value">{k.value}</div>
-                    {k.delta ? (
-                      <div
-                        className="qbr-kpi-delta"
-                        style={{ color: statusDeltaColor(k.status) }}
-                      >
-                        {k.delta}
-                      </div>
-                    ) : null}
-                  </div>
-                ))}
+        {!showExport ? (
+          <>
+            <div className="qbr-topbar">
+              <div className="qbr-topbar-logo">yuno</div>
+              <div className="qbr-topbar-chips">
+                <span className="qbr-chip qbr-chip-blue">{partnerName}</span>
+                <span className="qbr-chip qbr-chip-dim">{period}</span>
               </div>
+              <button
+                type="button"
+                className="qbr-gen-btn"
+                onClick={() => setShowExport(true)}
+              >
+                Gerar relatório
+              </button>
+            </div>
 
-              <div className="qbr-body">
-                {activeTab === "overview" && (
-                  <div className="qbr-grid-3">
-                    <div>
-                      <div className="qbr-card">
-                        <h3 className="qbr-card-title">
-                          Approval rate vs benchmark
-                        </h3>
-                        <div className="qbr-chart-wrap">
-                          {monthly.length ? (
-                            <Chart
-                              type="bar"
-                              data={approvalChartData}
-                              options={approvalChartOptions}
-                            />
-                          ) : (
-                            <div style={{ color: Y.gray, padding: 24 }}>—</div>
-                          )}
-                        </div>
+            <div className="qbr-progress">
+              {SLIDE_LABELS.map((title, i) => (
+                <button
+                  key={title}
+                  type="button"
+                  className={`qbr-step${currentSlide === i ? " active" : ""}`}
+                  onClick={() => setCurrentSlide(i)}
+                >
+                  <span className="qbr-step-num">{i + 1}</span>
+                  {title}
+                </button>
+              ))}
+            </div>
+
+            <div className="qbr-slide-area">
+              <div className={`qbr-slide${currentSlide === 0 ? " active" : ""}`}>
+                <SlideHeader
+                  partner={partnerName}
+                  period={period}
+                  generatedAt={generatedAt}
+                />
+                <div className="qbr-slide-content">
+                  <div className="qbr-kpi-grid">
+                    <div
+                      className="qbr-kpi-card"
+                      style={{ borderTopColor: "#3E4FE0" }}
+                    >
+                      <div className="qbr-kpi-label">Total TPV</div>
+                      <div className="qbr-kpi-value c-blue">
+                        {kpis?.totalTPV ?? "—"}
                       </div>
-                      <div className="qbr-card">
-                        <h3 className="qbr-card-title">Métodos de pagamento</h3>
-                        <div className="qbr-chart-wrap qbr-chart-wrap--short">
-                          {paymentMethods.length ? (
-                            <Bar
-                              data={paymentChartData}
-                              options={{
-                                ...commonChartOptions,
-                                indexAxis: "y",
-                                scales: { x: scaleXY, y: scaleXY },
-                              }}
-                            />
-                          ) : (
-                            <div style={{ color: Y.gray, padding: 24 }}>—</div>
-                          )}
-                        </div>
+                      <div className="qbr-kpi-delta c-green">
+                        {kpis?.tpvGrowth ?? "—"}
                       </div>
                     </div>
+                    <div
+                      className="qbr-kpi-card"
+                      style={{ borderTopColor: "#3E4FE0" }}
+                    >
+                      <div className="qbr-kpi-label">Transações</div>
+                      <div className="qbr-kpi-value c-blue">
+                        {kpis?.totalTransactions ?? "—"}
+                      </div>
+                      <div className="qbr-kpi-delta c-blue">
+                        aprovadas no período
+                      </div>
+                    </div>
+                    <div
+                      className="qbr-kpi-card"
+                      style={{
+                        borderTopColor: getKpiTopColor(
+                          "approval",
+                          kpis?.approvalRate
+                        ),
+                      }}
+                    >
+                      <div className="qbr-kpi-label">Approval Rate</div>
+                      <div
+                        className="qbr-kpi-value"
+                        style={{
+                          color: getApprovalColor(
+                            parseFloat(
+                              String(kpis?.approvalRate || "").replace(
+                                /%/g,
+                                ""
+                              )
+                            ) || parsePctNum(kpis?.approvalRate)
+                          ),
+                        }}
+                      >
+                        {kpis?.approvalRate ?? "—"}
+                      </div>
+                      <div className="qbr-kpi-delta c-amber">Meta: 70%</div>
+                    </div>
+                    <div
+                      className="qbr-kpi-card"
+                      style={{ borderTopColor: "#E24B4A" }}
+                    >
+                      <div className="qbr-kpi-label">Vol. Recusado</div>
+                      <div className="qbr-kpi-value c-red">
+                        {kpis?.declinedVolume ?? "—"}
+                      </div>
+                      <div className="qbr-kpi-delta c-red">
+                        volume não convertido
+                      </div>
+                    </div>
+                  </div>
+                  {trendAnalysisText ? (
+                    <div
+                      className="qbr-narrative"
+                      dangerouslySetInnerHTML={{
+                        __html: String(trendAnalysisText).replace(
+                          /\*\*(.*?)\*\*/g,
+                          "<strong>$1</strong>"
+                        ),
+                      }}
+                    />
+                  ) : null}
+                  <DetailPanel
+                    id="monthly"
+                    open={!!openDetails.monthly}
+                    onToggle={toggleOpenDetail}
+                    label="Ver dados mensais detalhados"
+                  >
+                    <div className="qbr-detail-title">Evolução mensal</div>
+                    <table className="qbr-table">
+                      <thead>
+                        <tr>
+                          <th>Mês</th>
+                          <th>Transações</th>
+                          <th>Aprovadas</th>
+                          <th>Approval Rate</th>
+                          <th>Volume Total</th>
+                          <th>Volume Aprovado</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(monthlyPerformance || []).map((m, i) => {
+                          const rateRaw = m.approvalRate ?? m.taxa_aprovacao;
+                          const rateN = parsePctNum(rateRaw);
+                          return (
+                            <tr key={i}>
+                              <td>{m.month || m.mes}</td>
+                              <td>{formatNum(m.transactions ?? m.totalTxns ?? m.total_txns)}</td>
+                              <td>{formatNum(m.approved ?? m.aprovadas)}</td>
+                              <td>
+                                <span
+                                  className={getApprovalBadgeClass(rateN)}
+                                >
+                                  {rateN.toFixed(1)}%
+                                </span>
+                              </td>
+                              <td>{m.totalVolume ?? m.volume_total_brl ?? "—"}</td>
+                              <td>{m.approvedVolume ?? m.volume_aprovado_brl ?? "—"}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </DetailPanel>
+                </div>
+              </div>
 
-                    <div className="qbr-card">
-                      <h3 className="qbr-card-title">Merchants</h3>
-                      {mergedMerchants.length === 0 ? (
-                        <div style={{ color: Y.gray }}>—</div>
-                      ) : (
-                        mergedMerchants.slice(0, 12).map((m, i) => (
-                          <div key={i} className="qbr-merchant-row">
-                            <span
-                              className="qbr-dot"
-                              style={{
-                                background: merchantDotColor(m.rate),
-                              }}
-                            />
-                            <span style={{ flex: "0 0 90px", fontWeight: 600 }}>
-                              {m.name}
-                            </span>
-                            <div className="qbr-mini-bar">
+              <div className={`qbr-slide${currentSlide === 1 ? " active" : ""}`}>
+                <SlideHeader
+                  partner={partnerName}
+                  period={period}
+                  generatedAt={generatedAt}
+                />
+                <div className="qbr-slide-content">
+                  <div className="qbr-two-col">
+                    <div>
+                      <div className="qbr-section-label" style={{ color: "#1D9E75" }}>
+                        Destaques
+                      </div>
+                      {miHigh.slice(0, 2).map((m, i) => {
+                        const rateN = parsePctNum(m.approvalRate);
+                        return (
+                          <div
+                            key={i}
+                            className="qbr-perf-card"
+                            style={{
+                              borderLeftColor: "#3E4FE0",
+                              marginBottom: i === 0 ? 10 : 0,
+                            }}
+                          >
+                            <div className="qbr-perf-header">
+                              <div>
+                                <div className="qbr-perf-name">
+                                  {resolveMerchantName(m) || m.name || "—"}
+                                </div>
+                                <div className="qbr-perf-meta">
+                                  {m.volume} · {m.transactions} txns
+                                </div>
+                              </div>
+                              <span className="qbr-badge qbr-badge-ok">Destaque</span>
+                            </div>
+                            <div
+                              className="qbr-perf-rate"
+                              style={{ color: getApprovalColor(rateN) }}
+                            >
+                              {m.approvalRate}
+                            </div>
+                            <div className="qbr-rate-bar-wrap">
                               <div
-                                className="qbr-mini-bar-fill"
+                                className="qbr-rate-bar"
                                 style={{
-                                  width: `${Math.min(100, m.rate)}%`,
-                                  background: merchantDotColor(m.rate),
+                                  width: `${Math.min(100, rateN)}%`,
+                                  background: getApprovalColor(rateN),
                                 }}
                               />
                             </div>
-                            <span
-                              style={{
-                                flex: "0 0 48px",
-                                textAlign: "right",
-                                fontWeight: 700,
-                              }}
-                            >
-                              {m.label}
-                            </span>
-                            <span
-                              style={{
-                                flex: "0 0 72px",
-                                textAlign: "right",
-                                color: Y.gray,
-                                fontSize: 11,
-                              }}
-                            >
-                              {m.volume}
-                            </span>
-                          </div>
-                        ))
-                      )}
-                    </div>
-
-                    <div>
-                      <div className="qbr-impact">
-                        <div className="qbr-impact-accent">Impacto estimado</div>
-                        <div style={{ fontSize: 20, fontWeight: 800, marginTop: 8 }}>
-                          {kpis?.declinedVolume ?? "—"}
-                        </div>
-                        <div
-                          className="qbr-impact-accent"
-                          style={{ marginTop: 16 }}
-                        >
-                          Maior oportunidade
-                        </div>
-                        <div style={{ fontSize: 16, fontWeight: 700, marginTop: 4 }}>
-                          {topOpp}
-                        </div>
-                      </div>
-                      <div className="qbr-card">
-                        <h3 className="qbr-card-title">Decline codes</h3>
-                        <div className="qbr-chart-wrap qbr-chart-wrap--short">
-                          {declineCodes.length ? (
-                            <Bar
-                              data={declineBarData}
-                              options={{
-                                ...commonChartOptions,
-                                indexAxis: "y",
-                                scales: { x: scaleXY, y: scaleXY },
-                              }}
-                            />
-                          ) : (
-                            <div style={{ color: Y.gray }}>—</div>
-                          )}
-                        </div>
-                      </div>
-                      <div className="qbr-stat-grid-3">
-                        {[
-                          ["Soft", declineAgg.soft, Y.lightBlue],
-                          ["Hard", declineAgg.hard, Y.black],
-                          ["Operacional", declineAgg.op, "#E0A020"],
-                        ].map(([name, val, col]) => (
-                          <div key={name} className="qbr-stat-mini">
-                            <div style={{ color: Y.gray, fontWeight: 700 }}>
-                              {name}
-                            </div>
-                            <div
-                              style={{
-                                fontWeight: 800,
-                                marginTop: 6,
-                                color: col,
-                              }}
-                            >
-                              {val >= 1e6
-                                ? `R$ ${(val / 1e6).toFixed(1)}M`
-                                : val >= 1e3
-                                  ? `R$ ${(val / 1e3).toFixed(0)}k`
-                                  : `R$ ${Math.round(val)}`}
+                            <div className="qbr-perf-insight">
+                              {m.whyHighlight}{" "}
+                              {m.opportunity ? (
+                                <>
+                                  <br />
+                                  <strong style={{ color: "#1726A6" }}>
+                                    {m.opportunity}
+                                  </strong>
+                                </>
+                              ) : null}
                             </div>
                           </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {activeTab === "performance" && (
-                  <div>
-                    <h2 className="qbr-h2">Performance mensal</h2>
-                    <div
-                      style={{
-                        display: "grid",
-                        gridTemplateColumns: "1fr 1fr",
-                        gap: 16,
-                      }}
-                    >
-                      <div className="qbr-card">
-                        <h3 className="qbr-card-title">TPV mensal</h3>
-                        <div className="qbr-chart-wrap">
-                          {monthly.length ? (
-                            <Bar
-                              data={tpvChartData}
-                              options={{
-                                ...commonChartOptions,
-                                scales: { x: scaleXY, y: scaleXY },
-                              }}
-                            />
-                          ) : (
-                            <div style={{ color: Y.gray, padding: 24 }}>—</div>
-                          )}
-                        </div>
-                      </div>
-                      <div className="qbr-card">
-                        <h3 className="qbr-card-title">Transações mensais</h3>
-                        <div className="qbr-chart-wrap">
-                          {monthly.length ? (
-                            <Bar
-                              data={txnChartData}
-                              options={{
-                                ...commonChartOptions,
-                                scales: { x: scaleXY, y: scaleXY },
-                              }}
-                            />
-                          ) : (
-                            <div style={{ color: Y.gray, padding: 24 }}>—</div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                    {trendAnalysisText ? (
-                      <div className="qbr-trend" style={{ marginTop: 16 }}>
-                        {trendAnalysisText}
-                      </div>
-                    ) : null}
-                  </div>
-                )}
-
-                {activeTab === "merchants" && (
-                  <div className="qbr-merchants-tab-wrap">
-                  <div className="qbr-merch-grid">
-                    <div>
-                      <h2 className="qbr-h2">Destaques</h2>
-                      {highlights.length === 0 ? (
-                        <div style={{ color: Y.gray }}>—</div>
-                      ) : (
-                        highlights.map((m, i) => (
-                          <div
-                            key={i}
-                            className="qbr-merch-card qbr-merch-card--hi"
-                            style={{ marginBottom: 12 }}
-                          >
-                            <div style={{ fontWeight: 800, fontSize: 16 }}>
-                              {resolveMerchantName(m) || "—"}
-                            </div>
-                            <div
-                              style={{
-                                fontSize: 22,
-                                fontWeight: 800,
-                                color: Y.blue,
-                                marginTop: 6,
-                              }}
-                            >
-                              {m.approvalRate ?? "—"}
-                            </div>
-                            <div style={{ fontSize: 12, color: Y.gray, marginTop: 4 }}>
-                              {m.volume ?? "—"} · {m.transactions ?? "—"}
-                            </div>
-                            <p style={{ fontSize: 13, lineHeight: 1.5 }}>
-                              {m.whyHighlight ?? ""}
-                            </p>
-                            <p
-                              style={{
-                                fontSize: 13,
-                                fontWeight: 700,
-                                color: Y.darkBlue,
-                              }}
-                            >
-                              {m.opportunity ?? ""}
-                            </p>
-                          </div>
-                        ))
-                      )}
+                        );
+                      })}
                     </div>
                     <div>
-                      <h2 className="qbr-h2">Alertas</h2>
-                      {alerts.length === 0 ? (
-                        <div style={{ color: Y.gray }}>—</div>
-                      ) : (
-                        alerts.map((m, i) => (
+                      <div className="qbr-section-label" style={{ color: "#E24B4A" }}>
+                        Alertas críticos
+                      </div>
+                      {miAlerts.slice(0, 2).map((m, i) => {
+                        const rateN = parsePctNum(m.approvalRate);
+                        return (
                           <div
                             key={i}
-                            className="qbr-merch-card qbr-merch-card--alert"
-                            style={{ marginBottom: 12 }}
-                          >
-                            <div style={{ fontWeight: 800, fontSize: 16 }}>
-                              {resolveMerchantName(m) || "—"}
-                            </div>
-                            <div
-                              style={{
-                                fontSize: 22,
-                                fontWeight: 800,
-                                color: Y.crit,
-                                marginTop: 6,
-                              }}
-                            >
-                              {m.approvalRate ?? "—"}
-                            </div>
-                            <div style={{ fontSize: 12, color: Y.gray, marginTop: 4 }}>
-                              {m.volume ?? "—"} · {m.transactions ?? "—"}
-                            </div>
-                            <p style={{ fontSize: 13 }}>{m.whyAlert ?? ""}</p>
-                            <p style={{ fontSize: 12, color: Y.gray }}>
-                              {m.rootCause ?? ""}
-                            </p>
-                            <p style={{ fontSize: 13, fontWeight: 600 }}>
-                              {m.suggestion ?? ""}
-                            </p>
-                            <p
-                              style={{
-                                fontSize: 12,
-                                fontWeight: 700,
-                                color: Y.darkBlue,
-                              }}
-                            >
-                              {m.potentialImpact ?? ""}
-                            </p>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                    {highlights.length === 0 &&
-                    alerts.length === 0 &&
-                    merchantRanking.length > 0 ? (
-                      <div
-                        className="qbr-merch-ranking-fallback"
-                        style={{ gridColumn: "1 / -1", marginTop: 12 }}
-                      >
-                        <h2 className="qbr-h2">Ranking (dados do ficheiro)</h2>
-                        <p
-                          style={{
-                            fontSize: 13,
-                            color: Y.gray,
-                            marginBottom: 14,
-                            lineHeight: 1.5,
-                          }}
-                        >
-                          Sem destaques ou alertas gerados pela IA; a lista abaixo
-                          vem do CSV de métricas (top merchants agregados).
-                        </p>
-                        {merchantRanking.slice(0, 24).map((m, i) => (
-                          <div
-                            key={i}
-                            className="qbr-merch-card"
+                            className="qbr-perf-card"
                             style={{
-                              marginBottom: 10,
-                              border: `1px solid ${Y.lilac}`,
+                              borderLeftColor: "#E24B4A",
+                              marginBottom: i === 0 ? 10 : 0,
                             }}
                           >
-                            <div style={{ fontWeight: 800, fontSize: 15 }}>
-                              {resolveMerchantName(m) || m.name || "—"}
+                            <div className="qbr-perf-header">
+                              <div>
+                                <div className="qbr-perf-name">
+                                  {resolveMerchantName(m) || m.name || "—"}
+                                </div>
+                                <div className="qbr-perf-meta">
+                                  {m.volume} · {m.transactions} txns
+                                </div>
+                              </div>
+                              <span className="qbr-badge qbr-badge-crit">Alerta</span>
                             </div>
                             <div
-                              style={{
-                                fontSize: 14,
-                                fontWeight: 700,
-                                marginTop: 6,
-                                color: Y.blue,
-                              }}
+                              className="qbr-perf-rate"
+                              style={{ color: "#E24B4A" }}
                             >
-                              {typeof m.approvalRate === "number"
-                                ? `${m.approvalRate}%`
-                                : m.approvalRate ?? "—"}{" "}
-                              · {m.volume ?? "—"}
+                              {m.approvalRate}
+                            </div>
+                            <div className="qbr-rate-bar-wrap">
+                              <div
+                                className="qbr-rate-bar"
+                                style={{
+                                  width: `${Math.min(100, rateN)}%`,
+                                  background: "#E24B4A",
+                                }}
+                              />
+                            </div>
+                            <div className="qbr-perf-insight">
+                              <strong style={{ color: "#E24B4A" }}>Causa:</strong>{" "}
+                              {m.rootCause}
+                              <br />
+                              <strong>Ação:</strong> {m.suggestion}
                             </div>
                           </div>
-                        ))}
-                      </div>
-                    ) : null}
+                        );
+                      })}
+                    </div>
                   </div>
-
-                  {merchantRanking.length > 0 ? (
-                    <>
-                      <h2 className="qbr-merchants-full-title">
-                        Performance Completa — Todos os Merchants
-                      </h2>
-                      <table className="qbr-merchants-table">
-                        <thead>
-                          <tr>
-                            <th>#</th>
-                            <th>Merchant</th>
-                            <th>Transações</th>
-                            <th>Aprovadas</th>
-                            <th>Approval rate</th>
-                            <th>Volume total</th>
-                            <th>Ticket médio</th>
-                            <th>Status</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {merchantsTableRows.map((row, i) => {
-                            const st = getApprovalStyle(row._rate);
-                            const meta = merchantStatusMeta(row._rate);
-                            const barW = Math.min(
-                              100,
-                              Math.max(0, row._rate)
-                            );
-                            return (
-                              <tr key={`${row._name}-${i}`}>
-                                <td
-                                  style={{
-                                    color: "#92959B",
-                                    fontSize: 11,
-                                  }}
-                                >
-                                  {i + 1}
-                                </td>
-                                <td
-                                  style={{
-                                    fontWeight: 700,
-                                    fontSize: 13,
-                                    color: "#282A30",
-                                  }}
-                                >
-                                  {row._name}
-                                </td>
-                                <td style={{ color: "#282A30" }}>
-                                  {formatNumTable(row._totalTxns)}
-                                </td>
-                                <td style={{ color: "#282A30" }}>
-                                  {formatNumTable(row._approved)}
-                                </td>
-                                <td>
-                                  <span
-                                    className="qbr-approval-badge"
-                                    style={{
-                                      background: st.bg,
-                                      color: st.text,
-                                    }}
-                                  >
-                                    {row._rate.toFixed(1)}%
-                                  </span>
-                                  <div className="qbr-approval-bar-wrap">
-                                    <div
-                                      className="qbr-approval-bar"
-                                      style={{
-                                        width: `${barW}%`,
-                                        background: st.bar,
-                                      }}
-                                    />
-                                  </div>
-                                </td>
-                                <td
-                                  style={{
-                                    fontWeight: 600,
-                                    color: "#282A30",
-                                  }}
-                                >
-                                  {row._volumeDisp}
-                                </td>
-                                <td style={{ color: "#92959B" }}>
-                                  {row._ticketDisp}
-                                </td>
-                                <td style={{ fontSize: 11 }}>
-                                  <span
-                                    className="qbr-status-dot"
-                                    style={{ background: meta.color }}
-                                  />
-                                  {meta.label}
-                                </td>
-                              </tr>
-                            );
-                          })}
-                          {merchantsTableTotals ? (
-                            <tr className="total-row">
-                              <td>—</td>
-                              <td>TOTAL</td>
+                  <DetailPanel
+                    id="merchants"
+                    open={!!openDetails.merchants}
+                    onToggle={toggleOpenDetail}
+                    label={`Ver todos os ${merchantsFullList.length} merchants`}
+                  >
+                    <div className="qbr-detail-title">Tabela completa de merchants</div>
+                    <table className="qbr-table">
+                      <thead>
+                        <tr>
+                          <th>#</th>
+                          <th>Merchant</th>
+                          <th>Txns</th>
+                          <th>Aprovadas</th>
+                          <th>Approval Rate</th>
+                          <th>Volume</th>
+                          <th>Ticket Médio</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {merchantsFullList.map((m, i) => {
+                          const rateN = parsePctNum(m.approvalRate);
+                          return (
+                            <tr key={i}>
+                              <td style={{ color: "#92959B" }}>{i + 1}</td>
                               <td>
-                                {formatNumTable(merchantsTableTotals.sumTx)}
+                                <strong>
+                                  {resolveMerchantName(m) || m.name || "—"}
+                                </strong>
                               </td>
+                              <td>{formatNum(m.totalTxns)}</td>
+                              <td>{formatNum(m.approved)}</td>
                               <td>
-                                {formatNumTable(merchantsTableTotals.sumAp)}
+                                <span className={getApprovalBadgeClass(rateN)}>
+                                  {rateN.toFixed(2)}%
+                                </span>
                               </td>
-                              <td>
-                                {merchantsTableTotals.pct != null ? (
-                                  <span
-                                    className="qbr-approval-badge"
-                                    style={{
-                                      background: "#3E4FE0",
-                                      color: "#fff",
-                                    }}
-                                  >
-                                    {merchantsTableTotals.pct}%
-                                  </span>
-                                ) : (
-                                  "—"
-                                )}
-                              </td>
-                              <td>
-                                {formatBRLTotal(merchantsTableTotals.sumVol)}
-                              </td>
-                              <td>—</td>
-                              <td>—</td>
+                              <td>{m.volume}</td>
+                              <td style={{ color: "#92959B" }}>{m.avgTicket}</td>
                             </tr>
-                          ) : null}
-                        </tbody>
-                      </table>
-                    </>
-                  ) : null}
+                          );
+                        })}
+                        <tr className="total-row">
+                          <td>—</td>
+                          <td>TOTAL</td>
+                          <td>{formatNum(merchantsTotals.sumTx)}</td>
+                          <td>{formatNum(merchantsTotals.sumAp)}</td>
+                          <td>
+                            <span
+                              className="qbr-badge"
+                              style={{ background: "#3E4FE0", color: "#fff" }}
+                            >
+                              {merchantsTotals.pctW != null
+                                ? `${merchantsTotals.pctW}%`
+                                : kpis?.approvalRate ?? "—"}
+                            </span>
+                          </td>
+                          <td>{kpis?.totalTPV}</td>
+                          <td>—</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </DetailPanel>
+                </div>
+              </div>
+
+              <div className={`qbr-slide${currentSlide === 2 ? " active" : ""}`}>
+                <SlideHeader
+                  partner={partnerName}
+                  period={period}
+                  generatedAt={generatedAt}
+                />
+                <div className="qbr-slide-content">
+                  {declineCodes.slice(0, 5).map((d, i) => {
+                    const insight = declineInsights.find(
+                      (di) => di.code === d.code
+                    );
+                    const insightAction =
+                      insight?.suggestedAction ?? insight?.action;
+                    const bType = declineBadgeType(d.type);
+                    return (
+                      <div key={i} className="qbr-decline-row">
+                        <div className="qbr-decline-rank">{i + 1}</div>
+                        <div className="qbr-decline-name">
+                          <div className="qbr-decline-code">{d.code}</div>
+                          <div className="qbr-decline-action">
+                            {insightAction || d.action || "—"}
+                          </div>
+                        </div>
+                        <div className="qbr-decline-right">
+                          <div className="qbr-decline-vol">
+                            {d.estimatedLostVolume}
+                          </div>
+                          <div className="qbr-decline-pct">
+                            {Number(d.pctOfDeclines).toFixed(1)}% ·
+                            <span
+                              className={`qbr-badge qbr-badge-${bType}`}
+                              style={{ marginLeft: 4 }}
+                            >
+                              {bType === "soft"
+                                ? "Soft"
+                                : bType === "hard"
+                                  ? "Hard"
+                                  : "Op."}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <div className="qbr-impact-card">
+                    <div>
+                      <div className="qbr-impact-label">Volume total recusado</div>
+                      <div className="qbr-impact-value">
+                        {kpis?.declinedVolume ?? "—"}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="qbr-impact-rl">
+                        Recuperável (soft + op.)
+                      </div>
+                      <div className="qbr-impact-rv">
+                        {formatRecoverableLabel(recoverableVolume)}
+                      </div>
+                    </div>
                   </div>
-                )}
+                  <DetailPanel
+                    id="declines"
+                    open={!!openDetails.declines}
+                    onToggle={toggleOpenDetail}
+                    label="Ver todos os códigos"
+                  >
+                    <div className="qbr-detail-title">Top decline codes</div>
+                    <table className="qbr-table">
+                      <thead>
+                        <tr>
+                          <th>Código</th>
+                          <th>Total</th>
+                          <th>% Rejeições</th>
+                          <th>Vol. Estimado Perdido</th>
+                          <th>Tipo</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {declineCodes.map((d, i) => {
+                          const bType = declineBadgeType(d.type);
+                          return (
+                            <tr key={i}>
+                              <td>{d.code}</td>
+                              <td>{formatNum(d.total)}</td>
+                              <td>{Number(d.pctOfDeclines).toFixed(1)}%</td>
+                              <td style={{ color: "#E24B4A", fontWeight: 600 }}>
+                                {d.estimatedLostVolume}
+                              </td>
+                              <td>
+                                <span className={`qbr-badge qbr-badge-${bType}`}>
+                                  {bType === "soft"
+                                    ? "Soft"
+                                    : bType === "hard"
+                                      ? "Hard"
+                                      : "Operacional"}
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </DetailPanel>
+                </div>
+              </div>
 
-                {activeTab === "declines" && (
-                  <>
-                    <div
-                      style={{
-                        display: "grid",
-                        gridTemplateColumns: "1fr 1.2fr",
-                        gap: 16,
-                        alignItems: "start",
-                      }}
-                    >
-                      <div className="qbr-card">
-                        <h3 className="qbr-card-title">Distribuição (top 6)</h3>
-                        <div className="qbr-chart-wrap qbr-chart-wrap--doughnut">
-                          {declineCodes.length ? (
-                            <Doughnut
-                              data={doughnutData}
-                              options={{
-                                ...commonChartOptions,
-                                cutout: "58%",
-                                plugins: {
-                                  ...commonChartOptions.plugins,
-                                  legend: {
-                                    position: "bottom",
-                                    labels: { color: Y.gray, font: chartFont },
-                                  },
-                                },
-                              }}
-                            />
-                          ) : (
-                            <div style={{ color: Y.gray, padding: 24 }}>—</div>
-                          )}
-                        </div>
-                      </div>
-                      <div className="qbr-card">
-                        <h3 className="qbr-card-title">Por código</h3>
-                        <div className="qbr-chart-wrap">
-                          {declineCodes.length ? (
-                            <Bar
-                              data={declineBarData}
-                              options={{
-                                ...commonChartOptions,
-                                indexAxis: "y",
-                                scales: { x: scaleXY, y: scaleXY },
-                              }}
-                            />
-                          ) : (
-                            <div style={{ color: Y.gray }}>—</div>
-                          )}
-                        </div>
-                      </div>
+              <div className={`qbr-slide${currentSlide === 3 ? " active" : ""}`}>
+                <SlideHeader
+                  partner={partnerName}
+                  period={period}
+                  generatedAt={generatedAt}
+                />
+                <div className="qbr-slide-content">
+                  {!issuesData ? (
+                    <div className="qbr-narrative">
+                      Nenhum arquivo de issues carregado. Gere o CSV com o prompt
+                      sugerido na tela inicial e faça upload junto com os dados.
                     </div>
-                    <div
-                      className="qbr-stat-grid-3"
-                      style={{ marginTop: 16 }}
-                    >
-                      <div className="qbr-card" style={{ textAlign: "center" }}>
+                  ) : (
+                    <>
+                      <div className="qbr-issues-kpi-grid">
                         <div
-                          style={{ color: Y.gray, fontSize: 11, fontWeight: 700 }}
+                          className="qbr-issues-kpi"
+                          style={{ borderTopColor: "#E24B4A" }}
                         >
-                          Total recusado
+                          <div className="qbr-kpi-label">Abertos</div>
+                          <div className="qbr-kpi-value c-red">
+                            {issuesData.summary?.totalOpen ?? 0}
+                          </div>
+                          <div className="qbr-kpi-delta c-dark">tickets ativos</div>
                         </div>
                         <div
-                          style={{
-                            fontSize: 18,
-                            fontWeight: 800,
-                            marginTop: 8,
-                            color: Y.darkBlue,
-                          }}
+                          className="qbr-issues-kpi"
+                          style={{ borderTopColor: "#c07010" }}
                         >
-                          {kpis?.declinedVolume ?? "—"}
+                          <div className="qbr-kpi-label">Prioridade High+</div>
+                          <div className="qbr-kpi-value c-amber">
+                            {(issuesData.byPriority?.Highest?.length || 0) +
+                              (issuesData.byPriority?.High?.length || 0)}
+                          </div>
+                          <div className="qbr-kpi-delta c-dark">
+                            requerem ação
+                          </div>
+                        </div>
+                        <div
+                          className="qbr-issues-kpi"
+                          style={{ borderTopColor: "#3E4FE0" }}
+                        >
+                          <div className="qbr-kpi-label">Fechados</div>
+                          <div className="qbr-kpi-value c-blue">
+                            {issuesData.summary?.totalClosed ?? 0}
+                          </div>
+                          <div className="qbr-kpi-delta c-dark">
+                            resolvidos no trim.
+                          </div>
+                        </div>
+                        <div
+                          className="qbr-issues-kpi"
+                          style={{ borderTopColor: "#1D9E75" }}
+                        >
+                          <div className="qbr-kpi-label">Padrão recorrente</div>
+                          <div
+                            className="qbr-kpi-value c-green"
+                            style={{ fontSize: 16 }}
+                          >
+                            3DS
+                          </div>
+                          <div className="qbr-kpi-delta c-dark">
+                            + device fingerprint
+                          </div>
                         </div>
                       </div>
-                      <div className="qbr-card" style={{ textAlign: "center" }}>
-                        <div
-                          style={{ color: Y.gray, fontSize: 11, fontWeight: 700 }}
-                        >
-                          Transações recusadas
+                      {issuesAnalysis?.summary ? (
+                        <div className="qbr-narrative">{issuesAnalysis.summary}</div>
+                      ) : null}
+                      {issuesAnalysis?.connectionToMetrics ? (
+                        <div className="qbr-connection-box">
+                          {issuesAnalysis.connectionToMetrics}
                         </div>
-                        <div
-                          style={{
-                            fontSize: 18,
-                            fontWeight: 800,
-                            marginTop: 8,
-                            color: Y.darkBlue,
-                          }}
-                        >
-                          {declinedTxSum.toLocaleString("pt-BR")}
+                      ) : null}
+                      <DetailPanel
+                        id="issues"
+                        open={!!openDetails.issues}
+                        onToggle={toggleOpenDetail}
+                        label={`Ver todos os ${issuesData.totalTickets} tickets`}
+                      >
+                        <div className="qbr-detail-title">
+                          Tickets — abertos e fechados
                         </div>
-                      </div>
-                      <div className="qbr-card" style={{ textAlign: "center" }}>
-                        <div
-                          style={{ color: Y.gray, fontSize: 11, fontWeight: 700 }}
-                        >
-                          Códigos
-                        </div>
-                        <div
-                          style={{
-                            fontSize: 18,
-                            fontWeight: 800,
-                            marginTop: 8,
-                            color: Y.darkBlue,
-                          }}
-                        >
-                          {declineCodes.length}
-                        </div>
-                      </div>
-                    </div>
-                  </>
-                )}
-
-                {activeTab === "issues" && (
-                  <div className="qbr-issues-panel">
-                    {!issuesData?.totalTickets ? (
-                      <div className="qbr-card">
-                        <p style={{ color: Y.gray, margin: 0 }}>
-                          Nenhum CSV de issues Jira foi carregado neste relatório.
-                          Na geração, anexe o ficheiro opcional &quot;Issues Jira&quot;
-                          para ver KPIs, análise e tabelas aqui.
-                        </p>
-                      </div>
-                    ) : (
-                      <>
-                        <div className="qbr-issues-kpi-strip">
-                          <div
-                            className="qbr-issues-kpi-cell"
-                            style={{ borderTopColor: Y.ok }}
-                          >
-                            <div className="qbr-kpi-label">Total tickets</div>
-                            <div className="qbr-kpi-value">
-                              {issuesData.totalTickets}
-                            </div>
-                          </div>
-                          <div
-                            className="qbr-issues-kpi-cell"
-                            style={{
-                              borderTopColor:
-                                issuesData.summary.totalOpen > 5
-                                  ? Y.crit
-                                  : Y.ok,
-                            }}
-                          >
-                            <div className="qbr-kpi-label">Abertos</div>
-                            <div
-                              className="qbr-kpi-value"
-                              style={{
-                                color:
-                                  issuesData.summary.totalOpen > 5
-                                    ? Y.crit
-                                    : Y.black,
-                              }}
-                            >
-                              {issuesData.summary.totalOpen}
-                            </div>
-                          </div>
-                          <div
-                            className="qbr-issues-kpi-cell"
-                            style={{
-                              borderTopColor:
-                                issuesData.summary.highestOpen > 0
-                                  ? Y.crit
-                                  : Y.ok,
-                            }}
-                          >
-                            <div className="qbr-kpi-label">
-                              Highest abertos
-                            </div>
-                            <div
-                              className="qbr-kpi-value"
-                              style={{
-                                color:
-                                  issuesData.summary.highestOpen > 0
-                                    ? Y.crit
-                                    : Y.black,
-                              }}
-                            >
-                              {issuesData.summary.highestOpen}
-                            </div>
-                          </div>
-                          <div
-                            className="qbr-issues-kpi-cell"
-                            style={{ borderTopColor: Y.ok }}
-                          >
-                            <div className="qbr-kpi-label">
-                              Merchants afetados
-                            </div>
-                            <div className="qbr-kpi-value">
-                              {issuesData.merchantsAffected?.length ?? 0}
-                            </div>
-                          </div>
-                        </div>
-
-                        {issuesSummaryText ? (
-                          <div className="qbr-issues-summary-ai">
-                            {issuesSummaryText}
-                          </div>
-                        ) : null}
-
-                        {issuesMetricsLinkText ? (
-                          <div className="qbr-issues-metrics-link">
-                            {issuesMetricsLinkText}
-                          </div>
-                        ) : null}
-
-                        <h2 className="qbr-h2">Issues críticos abertos</h2>
-                        <div className="qbr-table-wrap qbr-table-wrap--issues">
-                          <table className="qbr-table qbr-table--issues">
-                            <thead>
-                              <tr>
-                                <th>Ticket</th>
-                                <th>Problema</th>
-                                <th>Impacto</th>
-                                <th>Merchant</th>
-                                <th>Prioridade</th>
-                                <th>Ação sugerida</th>
+                        <table className="qbr-table">
+                          <thead>
+                            <tr>
+                              <th>Ticket</th>
+                              <th>Problema</th>
+                              <th>Merchant</th>
+                              <th>Prioridade</th>
+                              <th>Status</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {allIssueTickets.map((t, i) => (
+                              <tr
+                                key={i}
+                                style={{ opacity: t.isOpen ? 1 : 0.6 }}
+                              >
+                                <td style={{ fontWeight: 600, color: "#3E4FE0" }}>
+                                  {t.ticket}
+                                </td>
+                                <td>{t.problem}</td>
+                                <td>{t.merchant}</td>
+                                <td>
+                                  <span className={getIssueBadgeClass(t.priority)}>
+                                    {t.priority}
+                                  </span>
+                                </td>
+                                <td style={{ color: "#92959B", fontSize: 10 }}>
+                                  {t.status}
+                                </td>
                               </tr>
-                            </thead>
-                            <tbody>
-                              {issuesCriticalRows.length === 0 ? (
-                                <tr>
-                                  <td colSpan={6} style={{ color: Y.gray }}>
-                                    —
-                                  </td>
-                                </tr>
-                              ) : (
-                                issuesCriticalRows.map((row, i) => {
-                                  const pr = String(row.priority ?? "").trim();
-                                  const rowCls =
-                                    pr === "Highest" ||
-                                    pr === "" ||
-                                    pr === "—"
-                                      ? "qbr-issue-row--highest"
-                                      : pr === "High"
-                                        ? "qbr-issue-row--high"
-                                        : "";
-                                  return (
-                                    <tr key={i} className={rowCls}>
-                                      <td>{row.ticket}</td>
-                                      <td>{row.problem}</td>
-                                      <td>{row.impact}</td>
-                                      <td>{row.merchant}</td>
-                                      <td>
-                                        <span
-                                          className={`qbr-prio-badge ${
-                                            pr === "Highest" ||
-                                            pr === "" ||
-                                            pr === "—"
-                                              ? "qbr-prio-badge--crit"
-                                              : pr === "High"
-                                                ? "qbr-prio-badge--warn"
-                                                : "qbr-prio-badge--neutral"
-                                          }`}
-                                        >
-                                          {row.priority && row.priority !== "—"
-                                            ? row.priority
-                                            : "Highest"}
-                                        </span>
-                                      </td>
-                                      <td>{row.suggestedAction}</td>
-                                    </tr>
-                                  );
-                                })
-                              )}
-                            </tbody>
-                          </table>
-                        </div>
+                            ))}
+                          </tbody>
+                        </table>
+                      </DetailPanel>
+                    </>
+                  )}
+                </div>
+              </div>
 
-                        <div style={{ marginTop: 20 }}>
-                          <button
-                            type="button"
-                            className="qbr-btn-toggle-tickets"
-                            onClick={() =>
-                              setShowAllIssueTickets((v) => !v)
-                            }
-                          >
-                            {showAllIssueTickets
-                              ? "Ocultar lista completa"
-                              : `Ver todos os ${allIssueTickets.length} tickets`}
-                          </button>
+              <div className={`qbr-slide${currentSlide === 4 ? " active" : ""}`}>
+                <SlideHeader
+                  partner={partnerName}
+                  period={period}
+                  generatedAt={generatedAt}
+                />
+                <div className="qbr-slide-content">
+                  {nextSteps.slice(0, 5).map((ns, i) => (
+                    <div key={i} className="qbr-ns-row">
+                      <div
+                        className={`qbr-ns-num ${getPriorityClass(ns.priority || i + 1)}`}
+                      >
+                        {ns.priority || i + 1}
+                      </div>
+                      <div className="qbr-ns-body">
+                        <div className="qbr-ns-title">{ns.action}</div>
+                        <div className="qbr-ns-desc">
+                          {ns.description} · {ns.owner} · {ns.deadline}
                         </div>
+                      </div>
+                      <div className="qbr-ns-right">
+                        <div className="qbr-ns-impact">{ns.expectedImpact}</div>
+                        <div className="qbr-ns-owner">impacto estimado</div>
+                      </div>
+                    </div>
+                  ))}
+                  <DetailPanel
+                    id="nextsteps"
+                    open={!!openDetails.nextsteps}
+                    onToggle={toggleOpenDetail}
+                    label="Selecionar e exportar próximos passos"
+                  >
+                    <div className="qbr-narrative">
+                      Clique em &quot;Gerar relatório&quot; no topo para acessar o
+                      checklist completo de export.
+                    </div>
+                  </DetailPanel>
+                </div>
+              </div>
+            </div>
 
-                        {showAllIssueTickets ? (
-                          <div
-                            className="qbr-table-wrap qbr-table-wrap--issues"
-                            style={{ marginTop: 12 }}
-                          >
-                            <table className="qbr-table qbr-table--issues">
-                              <thead>
-                                <tr>
-                                  <th>Ticket</th>
-                                  <th>Status</th>
-                                  <th>Problema</th>
-                                  <th>Merchant</th>
-                                  <th>Prioridade</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {allIssueTickets.map((t, i) => {
-                                  const closed = !t.isOpen;
-                                  const pr = t.priority;
-                                  const rowCls = [
-                                    closed ? "qbr-issue-row--closed" : "",
-                                    !closed && pr === "Highest"
-                                      ? "qbr-issue-row--highest"
-                                      : "",
-                                    !closed && pr === "High"
-                                      ? "qbr-issue-row--high"
-                                      : "",
-                                  ]
-                                    .filter(Boolean)
-                                    .join(" ");
-                                  return (
-                                    <tr key={i} className={rowCls}>
-                                      <td>{t.ticket}</td>
-                                      <td>{t.status}</td>
-                                      <td>{t.problem}</td>
-                                      <td>{t.merchant}</td>
-                                      <td>
-                                        <span
-                                          className={`qbr-prio-badge ${
-                                            closed
-                                              ? "qbr-prio-badge--closed"
-                                              : pr === "Highest"
-                                                ? "qbr-prio-badge--crit"
-                                                : pr === "High"
-                                                  ? "qbr-prio-badge--warn"
-                                                  : "qbr-prio-badge--neutral"
-                                          }`}
-                                        >
-                                          {t.priority}
-                                        </span>
-                                      </td>
-                                    </tr>
-                                  );
-                                })}
-                              </tbody>
-                            </table>
-                          </div>
-                        ) : null}
+            <div className="qbr-nav">
+              <button
+                type="button"
+                className="qbr-nav-btn"
+                disabled={currentSlide === 0}
+                onClick={() => setCurrentSlide((c) => c - 1)}
+              >
+                <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
+                  <path
+                    d="M8 2L3 6.5l5 4.5"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+                Anterior
+              </button>
+              <div className="qbr-nav-center">
+                {currentSlide + 1} de 5 · {SLIDE_LABELS[currentSlide]}
+              </div>
+              <button
+                type="button"
+                className="qbr-nav-btn"
+                disabled={currentSlide === 4}
+                onClick={() => setCurrentSlide((c) => c + 1)}
+              >
+                Próximo
+                <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
+                  <path
+                    d="M5 2l5 4.5L5 11"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </button>
+            </div>
+          </>
+        ) : showReview ? (
+          <div className="qbr-review qbr-export-panel">
+            <div className="qbr-review-header">
+              <button
+                type="button"
+                className="qbr-export-back"
+                onClick={() => setShowReview(false)}
+              >
+                ← Voltar ao checklist
+              </button>
+              <div className="qbr-review-title">Revisão de dados sensíveis</div>
+              <div className="qbr-review-progress-meta">
+                {
+                  reviewBlocks.filter(
+                    (b) =>
+                      b.status === "approved" || b.status === "anonymized"
+                  ).length
+                }{" "}
+                de {reviewBlocks.length} blocos revisados
+              </div>
+              <div className="qbr-review-progress-track">
+                <div
+                  className="qbr-review-progress-fill"
+                  style={{
+                    width: `${reviewBlocks.length ? (100 * reviewBlocks.filter((b) => b.status === "approved" || b.status === "anonymized").length) / reviewBlocks.length : 0}%`,
+                  }}
+                />
+              </div>
+            </div>
+            <div className="qbr-review-explainer">
+              Identificamos dados que podem ser sensíveis neste relatório. Revise cada
+              item e escolha aprovação ou anonimização antes de gerar o PDF.
+            </div>
+            <div className="qbr-review-bulk">
+              <button
+                type="button"
+                className="qbr-review-btn-approve qbr-review-btn-approve-all"
+                disabled={!hasPendingReviewBlocks}
+                onClick={approveAllPendingReviewBlocks}
+              >
+                Aprovar todos
+              </button>
+              <button
+                type="button"
+                className="qbr-review-btn-anon qbr-review-btn-anon-all"
+                disabled={!hasPendingReviewBlocks}
+                onClick={anonymizeAllPendingReviewBlocks}
+              >
+                Anonimizar todos
+              </button>
+            </div>
+            <div className="qbr-review-list">
+              {reviewBlocks.map((block) => {
+                const typeLabels = [
+                  ...new Set(block.sensitiveMatches.map((m) => m.label)),
+                ];
+                const statusLabel =
+                  block.status === "approved"
+                    ? "Aprovado"
+                    : block.status === "anonymized"
+                      ? "Anonimizado"
+                      : "Pendente";
+                const cardMod =
+                  block.status === "approved"
+                    ? "qbr-review-card--approved"
+                    : block.status === "anonymized"
+                      ? "qbr-review-card--anonymized"
+                      : "qbr-review-card--pending";
+                const pending = block.status === "pending";
+                return (
+                  <div
+                    key={block.id}
+                    className={`qbr-review-card ${cardMod}`}
+                  >
+                    <div className="qbr-review-card-top">
+                      <span className="qbr-review-badge qbr-review-badge--section">
+                        {block.sectionLabel}
+                      </span>
+                      {typeLabels.map((lb) => (
+                        <span
+                          key={lb}
+                          className="qbr-review-badge qbr-review-badge--type"
+                        >
+                          {lb}
+                        </span>
+                      ))}
+                      <span
+                        className={`qbr-review-badge qbr-review-badge--status qbr-review-badge--status-${block.status}`}
+                      >
+                        {statusLabel}
+                      </span>
+                    </div>
+                    <div className="qbr-review-field">{block.field}</div>
+                    <div className="qbr-review-tlabel">Texto original:</div>
+                    <div className="qbr-review-original-box">
+                      <HighlightedOriginal
+                        text={block.originalValue}
+                        matches={block.sensitiveMatches}
+                      />
+                    </div>
+                    {block.status === "anonymized" &&
+                    block.anonymizedValue != null ? (
+                      <>
+                        <div className="qbr-review-tlabel qbr-review-tlabel--after">
+                          Após anonimização:
+                        </div>
+                        <div className="qbr-review-anon-box">
+                          {block.anonymizedValue}
+                        </div>
                       </>
-                    )}
-                  </div>
-                )}
-
-                {activeTab === "nextsteps" && (
-                  <div>
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                        marginBottom: 12,
-                      }}
-                    >
-                      <h2 className="qbr-h2" style={{ marginBottom: 0 }}>
-                        Próximos passos
-                      </h2>
+                    ) : null}
+                    <div className="qbr-review-card-actions">
                       <button
                         type="button"
-                        className="qbr-btn-export-trigger"
-                        onClick={() => setShowExport(true)}
+                        className="qbr-review-btn-approve"
+                        disabled={!pending}
+                        onClick={() => approveReviewBlock(block.id)}
                       >
-                        Selecionar e exportar
+                        Aprovar como está
+                      </button>
+                      <button
+                        type="button"
+                        className="qbr-review-btn-anon"
+                        disabled={!pending}
+                        onClick={() => anonymizeReviewBlock(block.id)}
+                      >
+                        Anonimizar dados
                       </button>
                     </div>
-                    <div className="qbr-table-wrap">
-                      <table className="qbr-table">
-                        <thead>
-                          <tr>
-                            <th>#</th>
-                            <th>Ação</th>
-                            <th>Responsável</th>
-                            <th>Prazo</th>
-                            <th>Impacto</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {nextSteps.length === 0 ? (
-                            <tr>
-                              <td colSpan={5} style={{ color: Y.gray }}>
-                                —
-                              </td>
-                            </tr>
-                          ) : (
-                            nextSteps.map((s, i) => (
-                              <tr key={i}>
-                                <td>{s.priority ?? i + 1}</td>
-                                <td>{s.action ?? "—"}</td>
-                                <td>{s.owner ?? "—"}</td>
-                                <td>{s.deadline ?? "—"}</td>
-                                <td>{s.expectedImpact ?? "—"}</td>
-                              </tr>
-                            ))
-                          )}
-                        </tbody>
-                      </table>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="qbr-review-footer">
+              <span className="qbr-review-footer-count">
+                {
+                  reviewBlocks.filter(
+                    (b) =>
+                      b.status === "approved" || b.status === "anonymized"
+                  ).length
+                }{" "}
+                de {reviewBlocks.length} itens revisados
+              </span>
+              <button
+                type="button"
+                className="qbr-btn-pdf"
+                disabled={!allReviewed}
+                onClick={runPrint}
+              >
+                Gerar PDF revisado
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="qbr-export qbr-export-panel">
+            <div className="qbr-export-header">
+              <button
+                type="button"
+                className="qbr-export-back"
+                onClick={() => setShowExport(false)}
+              >
+                ← Voltar
+              </button>
+              <div className="qbr-export-title">
+                Selecione as ações para o relatório
+              </div>
+              <div className="qbr-export-count">
+                <strong>{selectedSteps.size}</strong> de {nextSteps.length}{" "}
+                selecionadas
+              </div>
+            </div>
+            <div className="qbr-export-filters">
+              {[
+                ["all", "Todos"],
+                ["urgente", "Urgente"],
+                ["tecnico", "Técnico"],
+                ["comercial", "Comercial"],
+              ].map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  className={`qbr-pill ${filterCat === id ? "qbr-pill--active" : ""}`}
+                  onClick={() => setFilterCat(id)}
+                >
+                  {label}
+                </button>
+              ))}
+              <div className="qbr-export-filters-spacer" />
+              <button
+                type="button"
+                className="qbr-pill-ghost"
+                onClick={selectAllSteps}
+              >
+                Marcar todos
+              </button>
+              <button
+                type="button"
+                className="qbr-pill-ghost"
+                onClick={deselectAllSteps}
+              >
+                Desmarcar todos
+              </button>
+            </div>
+            <div className="qbr-export-list">
+              {filteredStepEntries.map(({ s, id }) => {
+                const sel = selectedSteps.has(id);
+                const st = priorityStyle(s.priority);
+                const cat = normalizeCategory(s.category);
+                const catLabel =
+                  cat === "urgente"
+                    ? "Urgente"
+                    : cat === "tecnico"
+                      ? "Técnico"
+                      : cat === "comercial"
+                        ? "Comercial"
+                        : (s.category ?? "—");
+                return (
+                  <div
+                    key={id}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => toggleStep(id)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        toggleStep(id);
+                      }
+                    }}
+                    className={`qbr-check-item ${sel ? "qbr-check-item--selected" : ""}`}
+                  >
+                    <div className="qbr-check-box">{sel ? "✓" : ""}</div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                          flexWrap: "wrap",
+                        }}
+                      >
+                        <span
+                          className="qbr-prio"
+                          style={{ background: st.bg, color: st.c }}
+                        >
+                          {s.priority ?? id}
+                        </span>
+                        <span
+                          style={{
+                            fontWeight: 800,
+                            fontSize: 14,
+                            color: Y.black,
+                          }}
+                        >
+                          {s.action ?? "—"}
+                        </span>
+                      </div>
+                      {s.description ? (
+                        <div
+                          style={{
+                            fontSize: 12,
+                            color: Y.gray,
+                            marginTop: 6,
+                            lineHeight: 1.45,
+                          }}
+                        >
+                          {s.description}
+                        </div>
+                      ) : null}
+                      <div style={{ fontSize: 11, color: Y.gray, marginTop: 8 }}>
+                        {(s.owner ?? "—") +
+                          " · " +
+                          (s.deadline ?? "—") +
+                          " · " +
+                          catLabel}
+                      </div>
+                    </div>
+                    <div
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 800,
+                        color: Y.blue,
+                        textAlign: "right",
+                        maxWidth: 120,
+                      }}
+                    >
+                      {s.expectedImpact ?? "—"}
                     </div>
                   </div>
-                )}
-              </div>
-
-              <footer className="qbr-footer">
-                <span style={{ fontWeight: 800 }}>yuno</span>
-                <span style={{ color: Y.gray }}>{genLabel}</span>
-                <a href="https://www.y.uno">www.y.uno</a>
-              </footer>
+                );
+              })}
             </div>
-          ) : showReview ? (
-            <div className="qbr-review">
-              <div className="qbr-review-header">
-                <button
-                  type="button"
-                  className="qbr-export-back"
-                  onClick={() => setShowReview(false)}
-                >
-                  ← Voltar ao checklist
-                </button>
-                <div className="qbr-review-title">Revisão de dados sensíveis</div>
-                <div className="qbr-review-progress-meta">
-                  {
-                    reviewBlocks.filter(
-                      (b) =>
-                        b.status === "approved" || b.status === "anonymized"
-                    ).length
-                  }{" "}
-                  de {reviewBlocks.length} blocos revisados
+            <div className="qbr-export-footer">
+              <div className="qbr-disclaimer">
+                Aviso sobre geração por IA — Este relatório foi produzido com auxílio
+                de inteligência artificial a partir dos dados exportados da plataforma
+                Yuno. Os números e métricas refletem os dados originais fornecidos. As
+                análises e recomendações foram geradas automaticamente e devem ser
+                revisadas pelo Partner Manager antes da apresentação ao parceiro.
+              </div>
+              <div className="qbr-export-actions">
+                <div className="qbr-export-actions-left">
+                  <span style={{ fontSize: 13, color: Y.gray }}>
+                    {selectedSteps.size} selecionada(s)
+                  </span>
+                  {sensitiveScanClean === true ? (
+                    <span className="qbr-sensitive-clean-badge">
+                      Nenhum dado sensível detectado
+                    </span>
+                  ) : null}
                 </div>
-                <div className="qbr-review-progress-track">
-                  <div
-                    className="qbr-review-progress-fill"
-                    style={{
-                      width: `${reviewBlocks.length ? (100 * reviewBlocks.filter((b) => b.status === "approved" || b.status === "anonymized").length) / reviewBlocks.length : 0}%`,
-                    }}
-                  />
-                </div>
-              </div>
-
-              <div className="qbr-review-explainer">
-                Identificamos dados que podem ser sensíveis neste relatório. Revise
-                cada item e escolha aprovação ou anonimização antes de gerar o PDF.
-              </div>
-
-              <div className="qbr-review-bulk">
-                <button
-                  type="button"
-                  className="qbr-review-btn-approve qbr-review-btn-approve-all"
-                  disabled={!hasPendingReviewBlocks}
-                  onClick={approveAllPendingReviewBlocks}
-                  title="Marca todos os blocos pendentes como aprovados (texto original no PDF)"
-                >
-                  Aprovar todos
-                </button>
-                <button
-                  type="button"
-                  className="qbr-review-btn-anon qbr-review-btn-anon-all"
-                  disabled={!hasPendingReviewBlocks}
-                  onClick={anonymizeAllPendingReviewBlocks}
-                  title="Aplica anonimização a todos os blocos ainda pendentes"
-                >
-                  Anonimizar todos
-                </button>
-              </div>
-
-              <div className="qbr-review-list">
-                {reviewBlocks.map((block) => {
-                  const typeLabels = [
-                    ...new Set(
-                      block.sensitiveMatches.map((m) => m.label)
-                    ),
-                  ];
-                  const statusLabel =
-                    block.status === "approved"
-                      ? "Aprovado"
-                      : block.status === "anonymized"
-                        ? "Anonimizado"
-                        : "Pendente";
-                  const cardMod =
-                    block.status === "approved"
-                      ? "qbr-review-card--approved"
-                      : block.status === "anonymized"
-                        ? "qbr-review-card--anonymized"
-                        : "qbr-review-card--pending";
-                  const pending = block.status === "pending";
-                  return (
-                    <div
-                      key={block.id}
-                      className={`qbr-review-card ${cardMod}`}
-                    >
-                      <div className="qbr-review-card-top">
-                        <span className="qbr-review-badge qbr-review-badge--section">
-                          {block.sectionLabel}
-                        </span>
-                        {typeLabels.map((lb) => (
-                          <span
-                            key={lb}
-                            className="qbr-review-badge qbr-review-badge--type"
-                          >
-                            {lb}
-                          </span>
-                        ))}
-                        <span
-                          className={`qbr-review-badge qbr-review-badge--status qbr-review-badge--status-${block.status}`}
-                        >
-                          {statusLabel}
-                        </span>
-                      </div>
-                      <div className="qbr-review-field">{block.field}</div>
-                      <div className="qbr-review-tlabel">Texto original:</div>
-                      <div className="qbr-review-original-box">
-                        <HighlightedOriginal
-                          text={block.originalValue}
-                          matches={block.sensitiveMatches}
-                        />
-                      </div>
-                      {block.status === "anonymized" &&
-                      block.anonymizedValue != null ? (
-                        <>
-                          <div className="qbr-review-tlabel qbr-review-tlabel--after">
-                            Após anonimização:
-                          </div>
-                          <div className="qbr-review-anon-box">
-                            {block.anonymizedValue}
-                          </div>
-                        </>
-                      ) : null}
-                      <div className="qbr-review-card-actions">
-                        <button
-                          type="button"
-                          className="qbr-review-btn-approve"
-                          disabled={!pending}
-                          onClick={() => approveReviewBlock(block.id)}
-                        >
-                          Aprovar como está
-                        </button>
-                        <button
-                          type="button"
-                          className="qbr-review-btn-anon"
-                          disabled={!pending}
-                          onClick={() => anonymizeReviewBlock(block.id)}
-                        >
-                          Anonimizar dados
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              <div className="qbr-review-footer">
-                <span className="qbr-review-footer-count">
-                  {
-                    reviewBlocks.filter(
-                      (b) =>
-                        b.status === "approved" || b.status === "anonymized"
-                    ).length
-                  }{" "}
-                  de {reviewBlocks.length} itens revisados
-                </span>
                 <button
                   type="button"
                   className="qbr-btn-pdf"
-                  disabled={!allReviewed}
-                  onClick={runPrint}
+                  disabled={selectedSteps.size === 0}
+                  onClick={onBaixarFromChecklist}
                 >
-                  Gerar PDF revisado
+                  Baixar documento PDF
                 </button>
               </div>
             </div>
-          ) : (
-            <div className="qbr-export">
-              <div className="qbr-export-header">
-                <button
-                  type="button"
-                  className="qbr-export-back"
-                  onClick={() => setShowExport(false)}
-                >
-                  ← Voltar
-                </button>
-                <div className="qbr-export-title">
-                  Selecione as ações para o relatório
-                </div>
-                <div className="qbr-export-count">
-                  <strong>{selectedSteps.size}</strong> de {nextSteps.length}{" "}
-                  selecionadas
-                </div>
-              </div>
-
-              <div className="qbr-export-filters">
-                {[
-                  ["all", "Todos"],
-                  ["urgente", "Urgente"],
-                  ["tecnico", "Técnico"],
-                  ["comercial", "Comercial"],
-                ].map(([id, label]) => (
-                  <button
-                    key={id}
-                    type="button"
-                    className={`qbr-pill ${filterCat === id ? "qbr-pill--active" : ""}`}
-                    onClick={() => setFilterCat(id)}
-                  >
-                    {label}
-                  </button>
-                ))}
-                <div className="qbr-export-filters-spacer" />
-                <button
-                  type="button"
-                  className="qbr-pill-ghost"
-                  onClick={selectAllSteps}
-                >
-                  Marcar todos
-                </button>
-                <button
-                  type="button"
-                  className="qbr-pill-ghost"
-                  onClick={deselectAllSteps}
-                >
-                  Desmarcar todos
-                </button>
-              </div>
-
-              <div className="qbr-export-list">
-                {filteredStepEntries.map(({ s, id }) => {
-                  const sel = selectedSteps.has(id);
-                  const st = priorityStyle(s.priority);
-                  const cat = normalizeCategory(s.category);
-                  const catLabel =
-                    cat === "urgente"
-                      ? "Urgente"
-                      : cat === "tecnico"
-                        ? "Técnico"
-                        : cat === "comercial"
-                          ? "Comercial"
-                          : s.category ?? "—";
-                  return (
-                    <div
-                      key={id}
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => toggleStep(id)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault();
-                          toggleStep(id);
-                        }
-                      }}
-                      className={`qbr-check-item ${sel ? "qbr-check-item--selected" : ""}`}
-                    >
-                      <div className="qbr-check-box">
-                        {sel ? "✓" : ""}
-                      </div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 8,
-                            flexWrap: "wrap",
-                          }}
-                        >
-                          <span
-                            className="qbr-prio"
-                            style={{ background: st.bg, color: st.c }}
-                          >
-                            {s.priority ?? id}
-                          </span>
-                          <span
-                            style={{
-                              fontWeight: 800,
-                              fontSize: 14,
-                              color: Y.black,
-                            }}
-                          >
-                            {s.action ?? "—"}
-                          </span>
-                        </div>
-                        {s.description ? (
-                          <div
-                            style={{
-                              fontSize: 12,
-                              color: Y.gray,
-                              marginTop: 6,
-                              lineHeight: 1.45,
-                            }}
-                          >
-                            {s.description}
-                          </div>
-                        ) : null}
-                        <div style={{ fontSize: 11, color: Y.gray, marginTop: 8 }}>
-                          {(s.owner ?? "—") +
-                            " · " +
-                            (s.deadline ?? "—") +
-                            " · " +
-                            catLabel}
-                        </div>
-                      </div>
-                      <div
-                        style={{
-                          fontSize: 11,
-                          fontWeight: 800,
-                          color: Y.blue,
-                          textAlign: "right",
-                          maxWidth: 120,
-                        }}
-                      >
-                        {s.expectedImpact ?? "—"}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              <div className="qbr-export-footer">
-                <div className="qbr-disclaimer">
-                  Aviso sobre geração por IA — Este relatório foi produzido com auxílio
-                  de inteligência artificial a partir dos dados exportados da plataforma
-                  Yuno. Os números e métricas refletem os dados originais fornecidos. As
-                  análises e recomendações foram geradas automaticamente e devem ser
-                  revisadas pelo Partner Manager antes da apresentação ao parceiro.
-                </div>
-                <div className="qbr-export-actions">
-                  <div className="qbr-export-actions-left">
-                    <span style={{ fontSize: 13, color: Y.gray }}>
-                      {selectedSteps.size} selecionada(s)
-                    </span>
-                    {sensitiveScanClean === true ? (
-                      <span className="qbr-sensitive-clean-badge">
-                        Nenhum dado sensível detectado
-                      </span>
-                    ) : null}
-                  </div>
-                  <button
-                    type="button"
-                    className="qbr-btn-pdf"
-                    disabled={selectedSteps.size === 0}
-                    onClick={onBaixarFromChecklist}
-                  >
-                    Baixar documento PDF
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
+          </div>
+        )}
       </div>
-
       {printPortal}
     </>
   );
