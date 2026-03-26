@@ -135,17 +135,35 @@ function buildReportFromYunoCsv({ yunoParsed, partnerName, period, claudeJson })
       };
     });
 
-  const merchantsFormatted = (parsed.merchants || []).map((m) => ({
-    name: String(m.organization_name ?? "").trim(),
-    organization_code: m.organization_code ?? "",
-    totalTxns: parseInt(m.total_txns, 10) || toNumber(m.total_txns),
-    approved: parseInt(m.aprovadas, 10) || toNumber(m.aprovadas),
-    approvalRate: toNumber(m.taxa_aprovacao),
-    volume: formatBRL(m.volume_brl),
-    volumeRaw: toNumber(m.volume_brl),
-    avgTicket: formatBRL(m.ticket_medio),
-    weighted_score: m.weighted_score,
-  }));
+  const merchantsFormatted = (parsed.merchants || []).map((m) => {
+    const orgName =
+      m.organization_name ??
+      m["Organization Name"] ??
+      m.nome_organizacao ??
+      m["Nome da organização"] ??
+      m.merchant ??
+      m.Merchant ??
+      m.name ??
+      "";
+    return {
+      name: String(orgName).trim(),
+      organization_code:
+        m.organization_code ?? m["Organization Code"] ?? m.codigo_organizacao ?? "",
+      totalTxns:
+        parseInt(m.total_txns, 10) ||
+        toNumber(m.total_txns ?? m["Total txns"] ?? m.Total_txns),
+      approved:
+        parseInt(m.aprovadas, 10) ||
+        toNumber(m.aprovadas ?? m.approved ?? m.Aprovadas),
+      approvalRate: toNumber(
+        m.taxa_aprovacao ?? m["Taxa aprovação"] ?? m.approval_rate
+      ),
+      volume: formatBRL(m.volume_brl ?? m["Volume BRL"] ?? m.volume_BRL),
+      volumeRaw: toNumber(m.volume_brl ?? m["Volume BRL"] ?? m.volume_BRL),
+      avgTicket: formatBRL(m.ticket_medio ?? m["Ticket médio"]),
+      weighted_score: m.weighted_score,
+    };
+  });
 
   const paymentMethodsFormatted = (parsed.paymentMethods || []).map((m) => {
     const rate = toNumber(m.taxa_aprovacao);

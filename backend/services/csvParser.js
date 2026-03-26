@@ -137,10 +137,14 @@ export function parseYunoCSV(text) {
         data.declineCodes.push(obj);
       } else if (currentSection.includes("EVOLUCAO MENSAL")) {
         data.declineEvolution.push(obj);
-      } else if (currentSection.includes("TOP MERCHANTS (AGREGADO)")) {
-        data.merchants.push(obj);
       } else if (currentSection.includes("TOP 10 MERCHANTS")) {
         data.merchantsMonthly.push(obj);
+      } else if (
+        currentSection.includes("TOP MERCHANTS (AGREGADO)") ||
+        (/TOP\s*MERCHANTS/i.test(currentSection) &&
+          !/TOP\s*10/i.test(currentSection))
+      ) {
+        data.merchants.push(obj);
       }
     }
 

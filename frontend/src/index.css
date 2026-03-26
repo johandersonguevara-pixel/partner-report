@@ -27,8 +27,77 @@ body {
   min-height: 100vh;
 }
 
+body.qbr-fullscreen {
+  overflow: hidden;
+}
+
 #root {
   min-height: 100vh;
+}
+
+.app-layout-root {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.app-main {
+  flex: 1;
+  min-height: 0;
+}
+
+body.qbr-fullscreen .app-main {
+  max-width: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+.generate-layout {
+  display: flex;
+  height: calc(100vh - 63px);
+  overflow: hidden;
+}
+
+.generate-sidebar {
+  width: 280px;
+  flex-shrink: 0;
+  background: #fff;
+  border-right: 1px solid #e8eaf5;
+  overflow-y: auto;
+  padding: 24px 20px;
+}
+
+.generate-sidebar-bleed-head {
+  margin: -24px -20px 20px;
+  padding: 16px 20px;
+  background: linear-gradient(135deg, #3e4fe0, #1726a6);
+  border-bottom: 1px solid #e8eaf5;
+}
+
+.generate-main {
+  flex: 1;
+  overflow: hidden;
+  background: #f7f8fc;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.generate-main-inner {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 16px 20px;
+}
+
+.qbr-report-slot {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 a {

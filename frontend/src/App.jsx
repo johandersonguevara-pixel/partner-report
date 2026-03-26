@@ -47,9 +47,17 @@ export default function App() {
   }
 
   return (
-    <div style={{ minHeight: '100vh', background: '#F5F6FA', fontFamily: "'Titillium Web', sans-serif" }}>
+    <div
+      className="app-layout-root"
+      style={{
+        minHeight: '100vh',
+        background: '#F5F6FA',
+        fontFamily: "'Titillium Web', sans-serif",
+      }}
+    >
       <Header user={CURRENT_USER} page={page} setPage={setPage} />
       <main
+        className="app-main"
         style={{
           maxWidth: page === 'generate' ? 1180 : 960,
           margin: '0 auto',

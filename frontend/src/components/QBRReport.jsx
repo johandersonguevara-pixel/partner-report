@@ -157,6 +157,50 @@ function parsePctFromString(s) {
   return Number.isFinite(v) ? v : NaN;
 }
 
+/** Nome do merchant a partir de várias chaves (IA, CSV PT/EN). */
+function resolveMerchantName(m) {
+  if (!m || typeof m !== "object") return "";
+  const v =
+    m.name ??
+    m.merchant ??
+    m.Merchant ??
+    m.organization_name ??
+    m.nome_organizacao ??
+    m.organizationName ??
+    m["Organization Name"] ??
+    m["Nome da organização"];
+  return String(v ?? "").trim();
+}
+
+function formatNumTable(n) {
+  const num = Math.round(Number(n)) || 0;
+  if (num >= 1e6) return `${(num / 1e6).toFixed(1)}M`;
+  if (num >= 1e3) return `${Math.round(num / 1e3)}K`;
+  return num.toLocaleString("pt-BR");
+}
+
+function formatBRLTotal(n) {
+  const num = Number(n) || 0;
+  if (num >= 1e9) return `R$ ${(num / 1e9).toFixed(1)}B`;
+  if (num >= 1e6) return `R$ ${(num / 1e6).toFixed(1)}M`;
+  if (num >= 1e3) return `R$ ${(num / 1e3).toFixed(1)}K`;
+  return `R$ ${num.toFixed(0)}`;
+}
+
+function getApprovalStyle(rate) {
+  const r = Number(rate) || 0;
+  if (r >= 75) return { bg: "#EEF5FF", text: "#1726A6", bar: "#1726A6" };
+  if (r >= 65) return { bg: "#FFF8E6", text: "#c07010", bar: "#c07010" };
+  return { bg: "#FEF0F0", text: "#E24B4A", bar: "#E24B4A" };
+}
+
+function merchantStatusMeta(rate) {
+  const r = Number(rate) || 0;
+  if (r >= 75) return { label: "Saudável", color: "#1D9E75" };
+  if (r >= 65) return { label: "Atenção", color: "#c07010" };
+  return { label: "Alerta", color: "#E24B4A" };
+}
+
 function approvalKpiStatus(pct) {
   if (!Number.isFinite(pct)) return "ok";
   if (pct < 65) return "crit";
@@ -388,6 +432,12 @@ function QBRReportInner({ report: rawReport, meta }) {
       ? report.merchant_alerts
       : [];
 
+  const merchantRanking = Array.isArray(report?.merchantRanking)
+    ? report.merchantRanking
+    : Array.isArray(report?.merchant_ranking)
+      ? report.merchant_ranking
+      : [];
+
   const declineCodesRaw = report?.declineCodes || report?.decline_codes || [];
   const declineCodes = useMemo(() => {
     const arr = Array.isArray(declineCodesRaw) ? declineCodesRaw : [];
@@ -480,7 +530,10 @@ function QBRReportInner({ report: rawReport, meta }) {
         : "ok"
     : "ok";
 
-  const merchantCount = highlights.length + alerts.length;
+  const merchantCount =
+    highlights.length + alerts.length > 0
+      ? highlights.length + alerts.length
+      : merchantRanking.length;
 
   const kpiStrip = useMemo(
     () => [
@@ -533,30 +586,108 @@ function QBRReportInner({ report: rawReport, meta }) {
   );
 
   const mergedMerchants = useMemo(() => {
+    const rateFrom = (x) => {
+      if (typeof x?.approvalRate === "number" && Number.isFinite(x.approvalRate)) {
+        return x.approvalRate;
+      }
+      const p = parsePctFromString(x?.approvalRate);
+      return Number.isFinite(p) ? p : 0;
+    };
+    const labelFrom = (x) => {
+      const ar = x?.approvalRate;
+      if (ar == null || ar === "") return "—";
+      if (typeof ar === "number") return `${ar}%`;
+      return String(ar);
+    };
+
     const rows = [];
     for (const h of highlights) {
-      const p = parsePctFromString(h?.approvalRate);
+      const rate = rateFrom(h);
       rows.push({
-        name: h?.name ?? "—",
-        rate: Number.isFinite(p) ? p : 0,
-        label: h?.approvalRate ?? "—",
-        volume: h?.volume ?? "—",
+        name: resolveMerchantName(h) || "—",
+        rate,
+        label: labelFrom(h),
+        volume: h?.volume ?? h?.totalVolume ?? "—",
         kind: "hi",
       });
     }
     for (const a of alerts) {
-      const p = parsePctFromString(a?.approvalRate);
+      const rate = rateFrom(a);
       rows.push({
-        name: a?.name ?? "—",
-        rate: Number.isFinite(p) ? p : 0,
-        label: a?.approvalRate ?? "—",
-        volume: a?.volume ?? "—",
+        name: resolveMerchantName(a) || "—",
+        rate,
+        label: labelFrom(a),
+        volume: a?.volume ?? a?.totalVolume ?? "—",
         kind: "al",
       });
     }
     rows.sort((a, b) => b.rate - a.rate);
-    return rows;
-  }, [highlights, alerts]);
+
+    const hasNamedRow = rows.some((r) => r.name && r.name !== "—");
+    if (hasNamedRow && rows.length > 0) return rows;
+
+    if (!merchantRanking.length) return rows;
+
+    return merchantRanking
+      .map((m) => {
+        const rate =
+          typeof m.approvalRate === "number" && Number.isFinite(m.approvalRate)
+            ? m.approvalRate
+            : parsePctFromString(m.approvalRate);
+        const r = Number.isFinite(rate) ? rate : 0;
+        return {
+          name: resolveMerchantName(m) || String(m.name ?? "").trim() || "—",
+          rate: r,
+          label:
+            typeof m.approvalRate === "number"
+              ? `${m.approvalRate}%`
+              : String(m.approvalRate ?? (r ? `${r.toFixed(1)}%` : "—")),
+          volume: m.volume ?? "—",
+          kind: "rank",
+        };
+      })
+      .sort((a, b) => b.rate - a.rate);
+  }, [highlights, alerts, merchantRanking]);
+
+  const merchantsTableRows = useMemo(() => {
+    return [...merchantRanking]
+      .map((m) => {
+        const rateRaw =
+          typeof m.approvalRate === "number" && Number.isFinite(m.approvalRate)
+            ? m.approvalRate
+            : parsePctFromString(m.approvalRate);
+        const rate = Number.isFinite(rateRaw) ? rateRaw : 0;
+        const volRaw = Number(m.volumeRaw) || 0;
+        const totalTxns = Math.round(Number(m.totalTxns)) || 0;
+        const approved = Math.round(Number(m.approved)) || 0;
+        return {
+          ...m,
+          _name: resolveMerchantName(m) || String(m.name ?? "").trim() || "—",
+          _rate: rate,
+          _volumeRaw: volRaw,
+          _totalTxns: totalTxns,
+          _approved: approved,
+          _volumeDisp: m.volume ?? "—",
+          _ticketDisp: m.avgTicket ?? "—",
+        };
+      })
+      .sort((a, b) => b._volumeRaw - a._volumeRaw);
+  }, [merchantRanking]);
+
+  const merchantsTableTotals = useMemo(() => {
+    if (!merchantsTableRows.length) return null;
+    let sumTx = 0;
+    let sumAp = 0;
+    let sumVol = 0;
+    for (const r of merchantsTableRows) {
+      sumTx += r._totalTxns;
+      sumAp += r._approved;
+      sumVol += r._volumeRaw;
+    }
+    const pct =
+      sumTx > 0 ? ((sumAp / sumTx) * 100).toFixed(1) : null;
+    return { sumTx, sumAp, sumVol, pct };
+  }, [merchantsTableRows]);
 
   function merchantDotColor(rate) {
     if (rate >= 75) return Y.blue;
@@ -847,6 +978,29 @@ function QBRReportInner({ report: rawReport, meta }) {
       })
     );
   }, []);
+
+  const anonymizeAllPendingReviewBlocks = useCallback(() => {
+    setReviewBlocks((prev) =>
+      prev.map((b) => {
+        if (b.status !== "pending") return b;
+        const anonymizedValue = anonymizeBlock(b);
+        return { ...b, status: "anonymized", anonymizedValue };
+      })
+    );
+  }, []);
+
+  const approveAllPendingReviewBlocks = useCallback(() => {
+    setReviewBlocks((prev) =>
+      prev.map((b) =>
+        b.status === "pending" ? { ...b, status: "approved" } : b
+      )
+    );
+  }, []);
+
+  const hasPendingReviewBlocks = useMemo(
+    () => reviewBlocks.some((b) => b.status === "pending"),
+    [reviewBlocks]
+  );
 
   const selectedList = useMemo(() => {
     return nextSteps
@@ -1286,6 +1440,7 @@ function QBRReportInner({ report: rawReport, meta }) {
                 )}
 
                 {activeTab === "merchants" && (
+                  <div className="qbr-merchants-tab-wrap">
                   <div className="qbr-merch-grid">
                     <div>
                       <h2 className="qbr-h2">Destaques</h2>
@@ -1299,7 +1454,7 @@ function QBRReportInner({ report: rawReport, meta }) {
                             style={{ marginBottom: 12 }}
                           >
                             <div style={{ fontWeight: 800, fontSize: 16 }}>
-                              {m.name ?? "—"}
+                              {resolveMerchantName(m) || "—"}
                             </div>
                             <div
                               style={{
@@ -1342,7 +1497,7 @@ function QBRReportInner({ report: rawReport, meta }) {
                             style={{ marginBottom: 12 }}
                           >
                             <div style={{ fontWeight: 800, fontSize: 16 }}>
-                              {m.name ?? "—"}
+                              {resolveMerchantName(m) || "—"}
                             </div>
                             <div
                               style={{
@@ -1377,6 +1532,184 @@ function QBRReportInner({ report: rawReport, meta }) {
                         ))
                       )}
                     </div>
+                    {highlights.length === 0 &&
+                    alerts.length === 0 &&
+                    merchantRanking.length > 0 ? (
+                      <div
+                        className="qbr-merch-ranking-fallback"
+                        style={{ gridColumn: "1 / -1", marginTop: 12 }}
+                      >
+                        <h2 className="qbr-h2">Ranking (dados do ficheiro)</h2>
+                        <p
+                          style={{
+                            fontSize: 13,
+                            color: Y.gray,
+                            marginBottom: 14,
+                            lineHeight: 1.5,
+                          }}
+                        >
+                          Sem destaques ou alertas gerados pela IA; a lista abaixo
+                          vem do CSV de métricas (top merchants agregados).
+                        </p>
+                        {merchantRanking.slice(0, 24).map((m, i) => (
+                          <div
+                            key={i}
+                            className="qbr-merch-card"
+                            style={{
+                              marginBottom: 10,
+                              border: `1px solid ${Y.lilac}`,
+                            }}
+                          >
+                            <div style={{ fontWeight: 800, fontSize: 15 }}>
+                              {resolveMerchantName(m) || m.name || "—"}
+                            </div>
+                            <div
+                              style={{
+                                fontSize: 14,
+                                fontWeight: 700,
+                                marginTop: 6,
+                                color: Y.blue,
+                              }}
+                            >
+                              {typeof m.approvalRate === "number"
+                                ? `${m.approvalRate}%`
+                                : m.approvalRate ?? "—"}{" "}
+                              · {m.volume ?? "—"}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+
+                  {merchantRanking.length > 0 ? (
+                    <>
+                      <h2 className="qbr-merchants-full-title">
+                        Performance Completa — Todos os Merchants
+                      </h2>
+                      <table className="qbr-merchants-table">
+                        <thead>
+                          <tr>
+                            <th>#</th>
+                            <th>Merchant</th>
+                            <th>Transações</th>
+                            <th>Aprovadas</th>
+                            <th>Approval rate</th>
+                            <th>Volume total</th>
+                            <th>Ticket médio</th>
+                            <th>Status</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {merchantsTableRows.map((row, i) => {
+                            const st = getApprovalStyle(row._rate);
+                            const meta = merchantStatusMeta(row._rate);
+                            const barW = Math.min(
+                              100,
+                              Math.max(0, row._rate)
+                            );
+                            return (
+                              <tr key={`${row._name}-${i}`}>
+                                <td
+                                  style={{
+                                    color: "#92959B",
+                                    fontSize: 11,
+                                  }}
+                                >
+                                  {i + 1}
+                                </td>
+                                <td
+                                  style={{
+                                    fontWeight: 700,
+                                    fontSize: 13,
+                                    color: "#282A30",
+                                  }}
+                                >
+                                  {row._name}
+                                </td>
+                                <td style={{ color: "#282A30" }}>
+                                  {formatNumTable(row._totalTxns)}
+                                </td>
+                                <td style={{ color: "#282A30" }}>
+                                  {formatNumTable(row._approved)}
+                                </td>
+                                <td>
+                                  <span
+                                    className="qbr-approval-badge"
+                                    style={{
+                                      background: st.bg,
+                                      color: st.text,
+                                    }}
+                                  >
+                                    {row._rate.toFixed(1)}%
+                                  </span>
+                                  <div className="qbr-approval-bar-wrap">
+                                    <div
+                                      className="qbr-approval-bar"
+                                      style={{
+                                        width: `${barW}%`,
+                                        background: st.bar,
+                                      }}
+                                    />
+                                  </div>
+                                </td>
+                                <td
+                                  style={{
+                                    fontWeight: 600,
+                                    color: "#282A30",
+                                  }}
+                                >
+                                  {row._volumeDisp}
+                                </td>
+                                <td style={{ color: "#92959B" }}>
+                                  {row._ticketDisp}
+                                </td>
+                                <td style={{ fontSize: 11 }}>
+                                  <span
+                                    className="qbr-status-dot"
+                                    style={{ background: meta.color }}
+                                  />
+                                  {meta.label}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                          {merchantsTableTotals ? (
+                            <tr className="total-row">
+                              <td>—</td>
+                              <td>TOTAL</td>
+                              <td>
+                                {formatNumTable(merchantsTableTotals.sumTx)}
+                              </td>
+                              <td>
+                                {formatNumTable(merchantsTableTotals.sumAp)}
+                              </td>
+                              <td>
+                                {merchantsTableTotals.pct != null ? (
+                                  <span
+                                    className="qbr-approval-badge"
+                                    style={{
+                                      background: "#3E4FE0",
+                                      color: "#fff",
+                                    }}
+                                  >
+                                    {merchantsTableTotals.pct}%
+                                  </span>
+                                ) : (
+                                  "—"
+                                )}
+                              </td>
+                              <td>
+                                {formatBRLTotal(merchantsTableTotals.sumVol)}
+                              </td>
+                              <td>—</td>
+                              <td>—</td>
+                            </tr>
+                          ) : null}
+                        </tbody>
+                      </table>
+                    </>
+                  ) : null}
                   </div>
                 )}
 
@@ -1819,6 +2152,27 @@ function QBRReportInner({ report: rawReport, meta }) {
               <div className="qbr-review-explainer">
                 Identificamos dados que podem ser sensíveis neste relatório. Revise
                 cada item e escolha aprovação ou anonimização antes de gerar o PDF.
+              </div>
+
+              <div className="qbr-review-bulk">
+                <button
+                  type="button"
+                  className="qbr-review-btn-approve qbr-review-btn-approve-all"
+                  disabled={!hasPendingReviewBlocks}
+                  onClick={approveAllPendingReviewBlocks}
+                  title="Marca todos os blocos pendentes como aprovados (texto original no PDF)"
+                >
+                  Aprovar todos
+                </button>
+                <button
+                  type="button"
+                  className="qbr-review-btn-anon qbr-review-btn-anon-all"
+                  disabled={!hasPendingReviewBlocks}
+                  onClick={anonymizeAllPendingReviewBlocks}
+                  title="Aplica anonimização a todos os blocos ainda pendentes"
+                >
+                  Anonimizar todos
+                </button>
               </div>
 
               <div className="qbr-review-list">
