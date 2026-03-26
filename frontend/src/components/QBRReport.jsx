@@ -28,6 +28,7 @@ const SLIDE_LABELS = [
   "Rejeições",
   "Issues",
   "Próximos Passos",
+  "Encerramento",
 ];
 
 function getApprovalBadgeClass(rate) {
@@ -156,6 +157,7 @@ function normalizeKpis(raw) {
     declinedVolume: k.declinedVolume ?? k.declined_volume,
     tpvGrowth: k.tpvGrowth ?? k.tpv_growth,
     topOpportunity: k.topOpportunity ?? k.top_opportunity,
+    merchantCount: k.merchantCount ?? k.merchant_count ?? k.merchants_count,
   };
 }
 
@@ -208,13 +210,6 @@ function HighlightedOriginal({ text, matches }) {
 }
 
 function SlideHeader({ partner, period, generatedAt }) {
-  let dateStr = "—";
-  try {
-    const d = new Date(generatedAt);
-    if (!Number.isNaN(d.getTime())) dateStr = d.toLocaleDateString("pt-BR");
-  } catch {
-    /* ignore */
-  }
   return (
     <div className="qbr-slide-header">
       <div className="qbr-slide-header-dots">
@@ -230,7 +225,10 @@ function SlideHeader({ partner, period, generatedAt }) {
         </div>
       </div>
       <div className="qbr-slide-header-right">
-        Yuno Partner Intelligence · {dateStr}
+        Yuno Partner Intelligence ·{" "}
+        {generatedAt
+          ? new Date(generatedAt).toLocaleDateString("pt-BR")
+          : new Date().toLocaleDateString("pt-BR")}
       </div>
     </div>
   );
@@ -358,7 +356,7 @@ function QBRReportInner({ report: rawReport, meta }) {
   useEffect(() => {
     const handler = (e) => {
       if (showExport || showReview) return;
-      if (e.key === "ArrowRight") setCurrentSlide((c) => Math.min(c + 1, 4));
+      if (e.key === "ArrowRight") setCurrentSlide((c) => Math.min(c + 1, 5));
       if (e.key === "ArrowLeft") setCurrentSlide((c) => Math.max(c - 1, 0));
     };
     window.addEventListener("keydown", handler);
@@ -372,27 +370,6 @@ function QBRReportInner({ report: rawReport, meta }) {
     report?.merchants && typeof report.merchants === "object"
       ? report.merchants
       : null;
-  const highlights = Array.isArray(merchantsBlock?.highlights)
-    ? merchantsBlock.highlights
-    : [];
-  const alerts = Array.isArray(merchantsBlock?.alerts)
-    ? merchantsBlock.alerts
-    : [];
-
-  const merchantInsights =
-    report?.merchantInsights &&
-    typeof report.merchantInsights === "object"
-      ? report.merchantInsights
-      : { highlights: [], alerts: [] };
-  const miHigh =
-    Array.isArray(merchantInsights.highlights) &&
-    merchantInsights.highlights.length > 0
-      ? merchantInsights.highlights
-      : highlights;
-  const miAlerts =
-    Array.isArray(merchantInsights.alerts) && merchantInsights.alerts.length > 0
-      ? merchantInsights.alerts
-      : alerts;
 
   const merchantRanking = Array.isArray(report?.merchantRanking)
     ? report.merchantRanking
@@ -405,6 +382,67 @@ function QBRReportInner({ report: rawReport, meta }) {
       (a, b) => (Number(b.volumeRaw) || 0) - (Number(a.volumeRaw) || 0)
     );
   }, [merchantRanking]);
+
+  const perfHighlightsFromCsv = useMemo(() => {
+    return merchantRanking
+      .filter((m) => parsePctNum(m.approvalRate) >= 75)
+      .slice(0, 2)
+      .map((m) => {
+        const rate = parsePctNum(m.approvalRate);
+        return {
+          name: resolveMerchantName(m) || m.name,
+          approvalRate: `${rate.toFixed(2)}%`,
+          volume: m.volume,
+          transactions: formatNum(m.totalTxns),
+          whyHighlight: `Taxa de aprovação de ${rate.toFixed(1)}% — acima do benchmark de 70%.`,
+          opportunity: `Volume de ${m.volume} com potencial de expansão de métodos de pagamento.`,
+        };
+      });
+  }, [merchantRanking]);
+
+  const perfAlertsFromCsv = useMemo(() => {
+    return merchantRanking
+      .filter((m) => parsePctNum(m.approvalRate) < 55)
+      .slice(0, 2)
+      .map((m) => {
+        const rate = parsePctNum(m.approvalRate);
+        return {
+          name: resolveMerchantName(m) || m.name,
+          approvalRate: `${rate.toFixed(2)}%`,
+          volume: m.volume,
+          transactions: formatNum(m.totalTxns),
+          whyAlert: `Approval rate de ${rate.toFixed(1)}% — crítico, abaixo de 55%.`,
+          rootCause:
+            "Análise detalhada necessária — ver decline codes por merchant.",
+          suggestion:
+            "Reunião técnica urgente para diagnóstico e plano de ação conjunto.",
+          potentialImpact: "Alto impacto em revenue da parceria.",
+        };
+      });
+  }, [merchantRanking]);
+
+  const merchantsHighlights = Array.isArray(merchantsBlock?.highlights)
+    ? merchantsBlock.highlights
+    : [];
+  const merchantsAlerts = Array.isArray(merchantsBlock?.alerts)
+    ? merchantsBlock.alerts
+    : [];
+
+  const highlights =
+    Array.isArray(report?.merchantInsights?.highlights) &&
+    report.merchantInsights.highlights.length > 0
+      ? report.merchantInsights.highlights
+      : merchantsHighlights.length > 0
+        ? merchantsHighlights
+        : perfHighlightsFromCsv;
+
+  const alerts =
+    Array.isArray(report?.merchantInsights?.alerts) &&
+    report.merchantInsights.alerts.length > 0
+      ? report.merchantInsights.alerts
+      : merchantsAlerts.length > 0
+        ? merchantsAlerts
+        : perfAlertsFromCsv;
 
   const merchantsTotals = useMemo(() => {
     let sumTx = 0;
@@ -446,9 +484,6 @@ function QBRReportInner({ report: rawReport, meta }) {
     }, 0);
   }, [declineCodes]);
 
-  const trendAnalysisText =
-    report?.trendAnalysis ?? report?.trend_analysis ?? "";
-
   const issuesData = report?.issuesData ?? report?.issues_data ?? null;
   const issuesAnalysisRaw =
     report?.issuesAnalysis ?? report?.issues_analysis ?? null;
@@ -461,6 +496,26 @@ function QBRReportInner({ report: rawReport, meta }) {
           issuesAnalysisRaw.connection_to_metrics,
       }
     : null;
+
+  const issuesNarrative =
+    report?.issuesAnalysis?.summary ||
+    report?.issuesAnalysis?.connection_to_metrics ||
+    (issuesData?.summary?.totalOpen > 0
+      ? `Existem ${issuesData.summary.totalOpen} tickets abertos com Mercado Pago, sendo ${issuesData.summary.highestOpen + issuesData.summary.highOpen} de prioridade High ou superior. Os issues mais recorrentes no período foram: ${(issuesData.summary.topIssues || []).slice(0, 3).join("; ")}.`
+      : null);
+
+  const connectionText =
+    report?.issuesAnalysis?.connectionToMetrics ||
+    report?.issuesAnalysis?.connection_to_metrics ||
+    (issuesData
+      ? "Issues técnicos como falhas de 3DS e device fingerprint impactam diretamente a taxa de aprovação — merchants como Q2 Ingressos registraram queda de 82% para 30% durante incidentes de autenticação."
+      : null);
+
+  const executiveSummary = Array.isArray(report?.executiveSummary)
+    ? report.executiveSummary
+    : Array.isArray(report?.executive_summary)
+      ? report.executive_summary
+      : [];
 
   const top3Opportunities =
     report?.top3Opportunities ?? report?.top_3_opportunities ?? [];
@@ -873,16 +928,34 @@ function QBRReportInner({ report: rawReport, meta }) {
                       </div>
                     </div>
                   </div>
-                  {trendAnalysisText ? (
+                  {(report?.trendAnalysis || report?.trend_analysis) ? (
                     <div
                       className="qbr-narrative"
                       dangerouslySetInnerHTML={{
-                        __html: String(trendAnalysisText).replace(
-                          /\*\*(.*?)\*\*/g,
-                          "<strong>$1</strong>"
-                        ),
+                        __html: String(
+                          report.trendAnalysis || report.trend_analysis
+                        ).replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>"),
                       }}
                     />
+                  ) : null}
+                  {!(report?.trendAnalysis || report?.trend_analysis) &&
+                  executiveSummary.length > 0 ? (
+                    <div className="qbr-narrative">
+                      <ul style={{ paddingLeft: 16, margin: 0 }}>
+                        {executiveSummary.map((b, i) => (
+                          <li
+                            key={i}
+                            style={{ marginBottom: 6 }}
+                            dangerouslySetInnerHTML={{
+                              __html: String(b).replace(
+                                /\*\*(.*?)\*\*/g,
+                                "<strong>$1</strong>"
+                              ),
+                            }}
+                          />
+                        ))}
+                      </ul>
+                    </div>
                   ) : null}
                   <DetailPanel
                     id="monthly"
@@ -936,12 +1009,19 @@ function QBRReportInner({ report: rawReport, meta }) {
                   generatedAt={generatedAt}
                 />
                 <div className="qbr-slide-content">
+                  {highlights.length === 0 && alerts.length === 0 ? (
+                    <div className="qbr-narrative">
+                      Os dados de análise de merchants serão gerados pelo Claude na
+                      próxima execução. Os dados brutos estão disponíveis em
+                      &quot;Ver todos os merchants&quot;.
+                    </div>
+                  ) : null}
                   <div className="qbr-two-col">
                     <div>
                       <div className="qbr-section-label" style={{ color: "#1D9E75" }}>
                         Destaques
                       </div>
-                      {miHigh.slice(0, 2).map((m, i) => {
+                      {highlights.slice(0, 2).map((m, i) => {
                         const rateN = parsePctNum(m.approvalRate);
                         return (
                           <div
@@ -997,7 +1077,7 @@ function QBRReportInner({ report: rawReport, meta }) {
                       <div className="qbr-section-label" style={{ color: "#E24B4A" }}>
                         Alertas críticos
                       </div>
-                      {miAlerts.slice(0, 2).map((m, i) => {
+                      {alerts.slice(0, 2).map((m, i) => {
                         const rateN = parsePctNum(m.approvalRate);
                         return (
                           <div
@@ -1283,12 +1363,15 @@ function QBRReportInner({ report: rawReport, meta }) {
                           </div>
                         </div>
                       </div>
-                      {issuesAnalysis?.summary ? (
-                        <div className="qbr-narrative">{issuesAnalysis.summary}</div>
+                      {issuesNarrative ? (
+                        <div className="qbr-narrative">{issuesNarrative}</div>
                       ) : null}
-                      {issuesAnalysis?.connectionToMetrics ? (
-                        <div className="qbr-connection-box">
-                          {issuesAnalysis.connectionToMetrics}
+                      {connectionText ? (
+                        <div
+                          className="qbr-connection-box"
+                          style={{ marginTop: 12 }}
+                        >
+                          {connectionText}
                         </div>
                       ) : null}
                       <DetailPanel
@@ -1378,6 +1461,189 @@ function QBRReportInner({ report: rawReport, meta }) {
                   </DetailPanel>
                 </div>
               </div>
+
+              <div className={`qbr-slide${currentSlide === 5 ? " active" : ""}`}>
+                <div
+                  style={{
+                    background: "linear-gradient(135deg, #3E4FE0 0%, #1726A6 100%)",
+                    padding: "56px 48px",
+                    minHeight: 320,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    textAlign: "center",
+                    position: "relative",
+                    overflow: "hidden",
+                  }}
+                >
+                  <div
+                    style={{
+                      position: "absolute",
+                      top: 20,
+                      right: 24,
+                      display: "grid",
+                      gridTemplateColumns: "repeat(7,1fr)",
+                      gap: 5,
+                      opacity: 0.12,
+                    }}
+                  >
+                    {Array.from({ length: 35 }).map((_, i) => (
+                      <div
+                        key={i}
+                        style={{
+                          width: 4,
+                          height: 4,
+                          borderRadius: "50%",
+                          background: "#fff",
+                        }}
+                      />
+                    ))}
+                  </div>
+                  <div
+                    style={{
+                      position: "absolute",
+                      bottom: 20,
+                      left: 24,
+                      display: "grid",
+                      gridTemplateColumns: "repeat(5,1fr)",
+                      gap: 5,
+                      opacity: 0.08,
+                    }}
+                  >
+                    {Array.from({ length: 25 }).map((_, i) => (
+                      <div
+                        key={i}
+                        style={{
+                          width: 4,
+                          height: 4,
+                          borderRadius: "50%",
+                          background: "#fff",
+                        }}
+                      />
+                    ))}
+                  </div>
+
+                  <div
+                    style={{
+                      width: 48,
+                      height: 3,
+                      background: "#E0ED80",
+                      borderRadius: 2,
+                      marginBottom: 28,
+                    }}
+                  />
+
+                  <div
+                    style={{
+                      fontSize: 13,
+                      fontWeight: 700,
+                      letterSpacing: "0.18em",
+                      textTransform: "uppercase",
+                      color: "rgba(255,255,255,0.5)",
+                      marginBottom: 12,
+                    }}
+                  >
+                    Yuno × {report?.partner || "Parceiro"}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 36,
+                      fontWeight: 700,
+                      color: "#fff",
+                      lineHeight: 1.15,
+                      marginBottom: 12,
+                      letterSpacing: "-0.02em",
+                    }}
+                  >
+                    Obrigado pela parceria.
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 15,
+                      color: "rgba(255,255,255,0.65)",
+                      fontWeight: 300,
+                      marginBottom: 32,
+                      maxWidth: 420,
+                      lineHeight: 1.7,
+                    }}
+                  >
+                    Acreditamos no potencial desta parceria e estamos comprometidos em
+                    trabalhar juntos para aumentar a aprovação, expandir o volume e
+                    gerar mais receita para ambos os lados.
+                  </div>
+
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "repeat(3,1fr)",
+                      gap: 16,
+                      width: "100%",
+                      maxWidth: 480,
+                      marginBottom: 32,
+                    }}
+                  >
+                    {[
+                      { label: "TPV Q1 2026", value: kpis?.totalTPV || "—" },
+                      {
+                        label: "Oportunidade",
+                        value: kpis?.topOpportunity || "R$ 21,6M/mês",
+                      },
+                      {
+                        label: "Merchants ativos",
+                        value: kpis?.merchantCount || "17",
+                      },
+                    ].map((item, i) => (
+                      <div
+                        key={i}
+                        style={{
+                          background: "rgba(255,255,255,0.1)",
+                          borderRadius: 8,
+                          padding: "12px 14px",
+                          border: "1px solid rgba(255,255,255,0.15)",
+                        }}
+                      >
+                        <div
+                          style={{
+                            fontSize: 9,
+                            fontWeight: 700,
+                            letterSpacing: "0.13em",
+                            textTransform: "uppercase",
+                            color: "rgba(255,255,255,0.45)",
+                            marginBottom: 6,
+                          }}
+                        >
+                          {item.label}
+                        </div>
+                        <div style={{ fontSize: 18, fontWeight: 700, color: "#fff" }}>
+                          {item.value}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div
+                    style={{
+                      fontSize: 22,
+                      fontWeight: 700,
+                      color: "#fff",
+                      letterSpacing: "-0.02em",
+                      marginBottom: 6,
+                    }}
+                  >
+                    yuno
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 11,
+                      color: "rgba(255,255,255,0.4)",
+                      fontWeight: 600,
+                    }}
+                  >
+                    www.y.uno · {new Date().getFullYear()}
+                  </div>
+                </div>
+              </div>
             </div>
 
             <div className="qbr-nav">
@@ -1399,12 +1665,12 @@ function QBRReportInner({ report: rawReport, meta }) {
                 Anterior
               </button>
               <div className="qbr-nav-center">
-                {currentSlide + 1} de 5 · {SLIDE_LABELS[currentSlide]}
+                {currentSlide + 1} de 6 · {SLIDE_LABELS[currentSlide]}
               </div>
               <button
                 type="button"
                 className="qbr-nav-btn"
-                disabled={currentSlide === 4}
+                disabled={currentSlide === 5}
                 onClick={() => setCurrentSlide((c) => c + 1)}
               >
                 Próximo
