@@ -8,7 +8,7 @@ import { v4 as uuidv4 } from "uuid";
 import { generateReportJSON } from "../services/claude.js";
 import { fetchPartnerMetrics } from "../services/metabase.js";
 import { appendHistory } from "./history.js";
-import { parseIssuesCSV } from "../services/csvParser.js";
+import { parseIssuesCSV, parseYunoCSV } from "../services/csvParser.js";
 import { generateInsights } from "../services/insightsGenerator.js";
 import { buildReport } from "../services/reportBuilder.js";
 
@@ -123,6 +123,7 @@ generateRouter.post("/", conditionalUpload, async (req, res, next) => {
 
     let rawDataText = "";
     let metricsBundle = {};
+    let yunoParsed = null;
 
     if (mainFile?.buffer?.length) {
       const fname = (mainFile.originalname || "").toLowerCase();
@@ -143,13 +144,28 @@ generateRouter.post("/", conditionalUpload, async (req, res, next) => {
           });
         }
       } else if (isCsv) {
-        console.log(`📄 Using uploaded CSV as raw data (${mainFile.size} bytes)`);
-        rawDataText = mainFile.buffer.toString("utf8").trim();
-        if (!rawDataText) {
+        console.log(`📄 Parsing Yuno payment CSV (${mainFile.size} bytes)`);
+        const csvRaw = mainFile.buffer.toString("utf8").trim();
+        if (!csvRaw) {
           return res.status(400).json({
             error: "CSV file is empty",
           });
         }
+        yunoParsed = parseYunoCSV(csvRaw);
+        console.log(
+          "MONTHLY ROWS:",
+          yunoParsed.monthlyPerformance?.length ?? 0
+        );
+        console.log(
+          "PAYMENT METHODS:",
+          yunoParsed.paymentMethods?.length ?? 0
+        );
+        console.log("MERCHANTS:", yunoParsed.merchants?.length ?? 0);
+        console.log(
+          "DECLINE CODES:",
+          yunoParsed.declineCodes?.length ?? 0
+        );
+        rawDataText = JSON.stringify(yunoParsed, null, 2);
       } else {
         return res.status(400).json({
           error: "Main file must be a PDF or CSV",
@@ -172,7 +188,13 @@ generateRouter.post("/", conditionalUpload, async (req, res, next) => {
       issuesPromptSection,
     });
 
-    const reportJSON = buildReport({ claudeJson, issuesData });
+    const reportJSON = buildReport({
+      claudeJson,
+      issuesData,
+      yunoParsed,
+      partnerName: name,
+      period: periodLabel,
+    });
 
     console.log("CLAUDE_JSON_RAW:", JSON.stringify(reportJSON, null, 2));
 

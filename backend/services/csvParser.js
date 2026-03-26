@@ -1,6 +1,6 @@
 /**
- * CSV de issues Jira: separador `;`
- * Colunas: Ticket;Status;Categoria;Problema;Impacto;Merchant;Prioridade
+ * CSV Yuno (pagamentos): vírgula, seções === SECAO: … ===
+ * CSV Jira (issues): ponto-e-vírgula, header na linha 1
  */
 
 const KNOWN_CATEGORIES = [
@@ -10,66 +10,139 @@ const KNOWN_CATEGORIES = [
   "Hot Feature",
 ];
 
-const PRIORITY_KEYS = ["Highest", "High", "Medium", "Low"];
-
-function emptyResult() {
-  const byCategory = {};
-  for (const c of KNOWN_CATEGORIES) byCategory[c] = [];
-  byCategory.Outros = [];
-  return {
-    totalTickets: 0,
-    openTickets: [],
-    closedTickets: [],
-    byPriority: {
-      Highest: [],
-      High: [],
-      Medium: [],
-      Low: [],
-    },
-    byCategory,
-    merchantsAffected: [],
-    summary: {
-      totalOpen: 0,
-      totalClosed: 0,
-      highestOpen: 0,
-      highOpen: 0,
-      topIssues: [],
-    },
-  };
-}
-
-/** Split por `;` respeitando aspas duplas. */
-export function parseSemicolonLine(line) {
-  const out = [];
-  let cur = "";
+/**
+ * @param {string} line
+ * @param {string} [separator=',']
+ * @returns {string[]}
+ */
+export function parseCSVLine(line, separator = ",") {
+  const result = [];
+  let current = "";
   let inQuotes = false;
   const s = String(line ?? "");
   for (let i = 0; i < s.length; i++) {
-    const c = s[i];
-    if (c === '"') {
-      inQuotes = !inQuotes;
-      continue;
+    const char = s[i];
+    if (char === '"') {
+      if (inQuotes && s[i + 1] === '"') {
+        current += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (char === separator && !inQuotes) {
+      result.push(current.trim());
+      current = "";
+    } else {
+      current += char;
     }
-    if (c === ";" && !inQuotes) {
-      out.push(cur.trim());
-      cur = "";
-      continue;
-    }
-    cur += c;
   }
-  out.push(cur.trim());
-  return out;
+  result.push(current.trim());
+  return result;
 }
 
-function normalizeHeaderCell(h) {
-  return String(h ?? "")
-    .trim()
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/\p{M}/gu, "");
+const SKIP_SECTIONS = [
+  "POR TIPO DE TRANSACAO",
+  "BANDEIRA DE CARTAO (MENSAL)",
+  "TOP 30 RESPOSTAS DO PROVEDOR",
+];
+
+/**
+ * @param {string} text
+ * @returns {{
+ *   meta: object,
+ *   monthlyPerformance: object[],
+ *   paymentMethods: object[],
+ *   paymentMethodsMonthly: object[],
+ *   cardBrands: object[],
+ *   cardTypeMonthly: object[],
+ *   declineCodes: object[],
+ *   declineEvolution: object[],
+ *   merchants: object[],
+ *   merchantsMonthly: object[]
+ * }}
+ */
+export function parseYunoCSV(text) {
+  const lines = String(text ?? "")
+    .replace(/^\uFEFF/, "")
+    .split(/\r?\n/);
+
+  const data = {
+    meta: {},
+    monthlyPerformance: [],
+    paymentMethods: [],
+    paymentMethodsMonthly: [],
+    cardBrands: [],
+    cardTypeMonthly: [],
+    declineCodes: [],
+    declineEvolution: [],
+    merchants: [],
+    merchantsMonthly: [],
+  };
+
+  let currentSection = null;
+  let currentHeaders = null;
+  let skipSection = false;
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) continue;
+
+    if (line.startsWith("=== SECAO:")) {
+      const inner = line
+        .replace(/^===\s*SECAO:\s*/i, "")
+        .replace(/\s*===\s*$/i, "")
+        .trim();
+      currentSection = inner;
+      currentHeaders = null;
+      skipSection = SKIP_SECTIONS.some((s) => currentSection.includes(s));
+      continue;
+    }
+
+    if (skipSection) continue;
+    if (!currentSection) continue;
+
+    if (!currentHeaders) {
+      currentHeaders = parseCSVLine(line, ",");
+      continue;
+    }
+
+    const values = parseCSVLine(line, ",");
+    if (values.length < 2) continue;
+
+    const obj = {};
+    currentHeaders.forEach((h, i) => {
+      const key = String(h ?? "").trim();
+      if (key) obj[key] = values[i] ?? "";
+    });
+
+    if (currentSection.includes("VISAO GERAL MENSAL")) {
+      data.monthlyPerformance.push(obj);
+    } else if (currentSection.includes("METODO DE PAGAMENTO (MENSAL)")) {
+      data.paymentMethodsMonthly.push(obj);
+    } else if (currentSection.includes("METODO DE PAGAMENTO")) {
+      data.paymentMethods.push(obj);
+    } else if (currentSection.includes("BANDEIRA DE CARTAO (AGREGADO)")) {
+      data.cardBrands.push(obj);
+    } else if (currentSection.includes("TIPO DE CARTAO")) {
+      data.cardTypeMonthly.push(obj);
+    } else if (
+      currentSection.includes("TOP 30 REJEICOES") ||
+      currentSection.includes("REJEICOES (YUNO)")
+    ) {
+      data.declineCodes.push(obj);
+    } else if (currentSection.includes("EVOLUCAO MENSAL")) {
+      data.declineEvolution.push(obj);
+    } else if (currentSection.includes("TOP MERCHANTS (AGREGADO)")) {
+      data.merchants.push(obj);
+    } else if (currentSection.includes("TOP 10 MERCHANTS")) {
+      data.merchantsMonthly.push(obj);
+    }
+  }
+
+  return data;
 }
 
-function normalizePriority(p) {
+function normalizeJiraPriority(p) {
   const s = String(p ?? "")
     .trim()
     .toLowerCase();
@@ -80,11 +153,6 @@ function normalizePriority(p) {
   return "Medium";
 }
 
-function priorityRank(p) {
-  const i = PRIORITY_KEYS.indexOf(p);
-  return i === -1 ? 99 : i;
-}
-
 function bucketCategory(cat) {
   const c = String(cat ?? "").trim();
   if (KNOWN_CATEGORIES.includes(c)) return c;
@@ -93,34 +161,52 @@ function bucketCategory(cat) {
 
 /**
  * @param {string} csvText
- * @returns {ReturnType<typeof emptyResult>}
  */
 export function parseIssuesCSV(csvText) {
   const raw = String(csvText ?? "")
     .replace(/^\uFEFF/, "")
     .trim();
-  if (!raw) return emptyResult();
+  if (!raw) {
+    return emptyIssuesResult();
+  }
 
   const lines = raw.split(/\r?\n/).filter((l) => l.trim());
-  if (lines.length < 2) return emptyResult();
+  if (lines.length < 2) {
+    return emptyIssuesResult();
+  }
 
-  const headerCells = parseSemicolonLine(lines[0]).map(normalizeHeaderCell);
-  const idx = {
-    ticket: headerCells.findIndex((h) => /ticket/.test(h)),
-    status: headerCells.findIndex((h) => /status/.test(h)),
-    category: headerCells.findIndex((h) => /categor/.test(h)),
-    problem: headerCells.findIndex((h) => /problema/.test(h)),
-    impact: headerCells.findIndex((h) => /impacto/.test(h)),
-    merchant: headerCells.findIndex((h) => /merchant/.test(h)),
-    priority: headerCells.findIndex((h) => /prioridade/.test(h)),
-  };
+  const headers = parseCSVLine(lines[0], ";").map((h) => h.trim());
+  const tickets = [];
 
-  const fallback = [0, 1, 2, 3, 4, 5, 6];
-  const col = (name, i) => (idx[name] >= 0 ? idx[name] : fallback[i]);
+  for (let i = 1; i < lines.length; i++) {
+    const values = parseCSVLine(lines[i], ";");
+    if (values.length < 2) continue;
+    const row = {};
+    headers.forEach((h, idx) => {
+      row[h] = values[idx]?.trim() ?? "";
+    });
 
-  const byCategory = {};
-  for (const c of KNOWN_CATEGORIES) byCategory[c] = [];
-  byCategory.Outros = [];
+    const status = row.Status ?? row.status ?? "";
+    const priorityNorm = normalizeJiraPriority(
+      row.Prioridade ?? row.prioridade ?? ""
+    );
+
+    const normalized = {
+      ticket: row.Ticket ?? row.ticket ?? "—",
+      status,
+      isOpen: String(status).toLowerCase().startsWith("aberto"),
+      category: row.Categoria ?? row.categoria ?? "—",
+      problem: row.Problema ?? row.problema ?? "—",
+      impact: row.Impacto ?? row.impacto ?? "—",
+      merchant: row.Merchant ?? row.merchant ?? "—",
+      priority: priorityNorm,
+    };
+
+    tickets.push(normalized);
+  }
+
+  const open = tickets.filter((t) => t.isOpen);
+  const closed = tickets.filter((t) => !t.isOpen);
 
   const byPriority = {
     Highest: [],
@@ -128,78 +214,64 @@ export function parseIssuesCSV(csvText) {
     Medium: [],
     Low: [],
   };
+  open.forEach((t) => {
+    const bucket = byPriority[t.priority] ? t.priority : "Medium";
+    byPriority[bucket].push(t);
+  });
 
-  const openTickets = [];
-  const closedTickets = [];
+  const byCategory = {};
+  for (const c of KNOWN_CATEGORIES) byCategory[c] = [];
+  byCategory.Outros = [];
+  tickets.forEach((t) => {
+    const b = bucketCategory(t.category);
+    if (!byCategory[b]) byCategory[b] = [];
+    byCategory[b].push(t);
+  });
+
   const merchantSet = new Set();
+  tickets.forEach((t) => {
+    if (t.merchant && t.merchant !== "—") merchantSet.add(t.merchant.trim());
+  });
 
-  for (let r = 1; r < lines.length; r++) {
-    const cols = parseSemicolonLine(lines[r]);
-    if (cols.length < 2) continue;
-
-    const ticketId = cols[col("ticket", 0)] ?? "";
-    const status = cols[col("status", 1)] ?? "";
-    const categoryRaw = cols[col("category", 2)] ?? "";
-    const problem = cols[col("problem", 3)] ?? "";
-    const impact = cols[col("impact", 4)] ?? "";
-    const merchant = cols[col("merchant", 5)] ?? "";
-    const priority = normalizePriority(cols[col("priority", 6)]);
-
-    const isOpen = String(status).toLowerCase().startsWith("aberto");
-    const catBucket = bucketCategory(categoryRaw);
-
-    const row = {
-      ticket: ticketId || "—",
-      status,
-      isOpen,
-      category: categoryRaw || "—",
-      problem: problem || "—",
-      impact: impact || "—",
-      merchant: merchant || "—",
-      priority,
-    };
-
-    if (merchant && merchant !== "—") merchantSet.add(merchant.trim());
-
-    if (PRIORITY_KEYS.includes(priority)) {
-      byPriority[priority].push(row);
-    } else {
-      byPriority.Medium.push(row);
-    }
-
-    if (!byCategory[catBucket]) byCategory[catBucket] = [];
-    byCategory[catBucket].push(row);
-
-    if (isOpen) openTickets.push(row);
-    else closedTickets.push(row);
-  }
-
-  const totalOpen = openTickets.length;
-  const totalClosed = closedTickets.length;
-  const highestOpen = openTickets.filter((t) => t.priority === "Highest").length;
-  const highOpen = openTickets.filter((t) => t.priority === "High").length;
-
-  const openSorted = [...openTickets].sort(
-    (a, b) => priorityRank(a.priority) - priorityRank(b.priority)
-  );
-  const topIssues = openSorted
-    .slice(0, 3)
-    .map((t) => t.problem || t.ticket)
+  const topIssues = [...byPriority.Highest, ...byPriority.High]
+    .slice(0, 5)
+    .map((t) => t.problem)
     .filter(Boolean);
 
   return {
-    totalTickets: openTickets.length + closedTickets.length,
-    openTickets,
-    closedTickets,
+    totalTickets: tickets.length,
+    openTickets: open,
+    closedTickets: closed,
     byPriority,
     byCategory,
     merchantsAffected: [...merchantSet].sort(),
     summary: {
-      totalOpen,
-      totalClosed,
-      highestOpen,
-      highOpen,
+      totalOpen: open.length,
+      totalClosed: closed.length,
+      highestOpen: byPriority.Highest.length,
+      highOpen: byPriority.High.length,
       topIssues,
+    },
+  };
+}
+
+function emptyIssuesResult() {
+  const byCategory = {};
+  for (const c of KNOWN_CATEGORIES) byCategory[c] = [];
+  byCategory.Outros = [];
+  return {
+    totalTickets: 0,
+    openTickets: [],
+    closedTickets: [],
+    byPriority: { Highest: [], High: [], Medium: [], Low: [] },
+    byCategory,
+    merchantsAffected: [],
+    summary: {
+      totalOpen: 0,
+      totalClosed: 0,
+      highestOpen: 0,
+      highOpen: 0,
+      topIssues: [],
     },
   };
 }
