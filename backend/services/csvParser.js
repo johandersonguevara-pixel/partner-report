@@ -61,12 +61,8 @@ const SKIP_SECTIONS = [
  *   merchantsMonthly: object[]
  * }}
  */
-export function parseYunoCSV(text) {
-  const lines = String(text ?? "")
-    .replace(/^\uFEFF/, "")
-    .split(/\r?\n/);
-
-  const data = {
+function emptyYunoParsed() {
+  return {
     meta: {},
     monthlyPerformance: [],
     paymentMethods: [],
@@ -78,68 +74,81 @@ export function parseYunoCSV(text) {
     merchants: [],
     merchantsMonthly: [],
   };
+}
 
-  let currentSection = null;
-  let currentHeaders = null;
-  let skipSection = false;
+export function parseYunoCSV(text) {
+  try {
+    const lines = String(text ?? "")
+      .replace(/^\uFEFF/, "")
+      .split(/\r?\n/);
 
-  for (const rawLine of lines) {
-    const line = rawLine.trim();
-    if (!line) continue;
+    const data = emptyYunoParsed();
 
-    if (line.startsWith("=== SECAO:")) {
-      const inner = line
-        .replace(/^===\s*SECAO:\s*/i, "")
-        .replace(/\s*===\s*$/i, "")
-        .trim();
-      currentSection = inner;
-      currentHeaders = null;
-      skipSection = SKIP_SECTIONS.some((s) => currentSection.includes(s));
-      continue;
+    let currentSection = null;
+    let currentHeaders = null;
+    let skipSection = false;
+
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (!line) continue;
+
+      if (line.startsWith("=== SECAO:")) {
+        const inner = line
+          .replace(/^===\s*SECAO:\s*/i, "")
+          .replace(/\s*===\s*$/i, "")
+          .trim();
+        currentSection = inner;
+        currentHeaders = null;
+        skipSection = SKIP_SECTIONS.some((s) => currentSection.includes(s));
+        continue;
+      }
+
+      if (skipSection) continue;
+      if (!currentSection) continue;
+
+      if (!currentHeaders) {
+        currentHeaders = parseCSVLine(line, ",");
+        continue;
+      }
+
+      const values = parseCSVLine(line, ",");
+      if (values.length < 2) continue;
+
+      const obj = {};
+      currentHeaders.forEach((h, i) => {
+        const key = String(h ?? "").trim();
+        if (key) obj[key] = values[i] ?? "";
+      });
+
+      if (currentSection.includes("VISAO GERAL MENSAL")) {
+        data.monthlyPerformance.push(obj);
+      } else if (currentSection.includes("METODO DE PAGAMENTO (MENSAL)")) {
+        data.paymentMethodsMonthly.push(obj);
+      } else if (currentSection.includes("METODO DE PAGAMENTO")) {
+        data.paymentMethods.push(obj);
+      } else if (currentSection.includes("BANDEIRA DE CARTAO (AGREGADO)")) {
+        data.cardBrands.push(obj);
+      } else if (currentSection.includes("TIPO DE CARTAO")) {
+        data.cardTypeMonthly.push(obj);
+      } else if (
+        currentSection.includes("TOP 30 REJEICOES") ||
+        currentSection.includes("REJEICOES (YUNO)")
+      ) {
+        data.declineCodes.push(obj);
+      } else if (currentSection.includes("EVOLUCAO MENSAL")) {
+        data.declineEvolution.push(obj);
+      } else if (currentSection.includes("TOP MERCHANTS (AGREGADO)")) {
+        data.merchants.push(obj);
+      } else if (currentSection.includes("TOP 10 MERCHANTS")) {
+        data.merchantsMonthly.push(obj);
+      }
     }
 
-    if (skipSection) continue;
-    if (!currentSection) continue;
-
-    if (!currentHeaders) {
-      currentHeaders = parseCSVLine(line, ",");
-      continue;
-    }
-
-    const values = parseCSVLine(line, ",");
-    if (values.length < 2) continue;
-
-    const obj = {};
-    currentHeaders.forEach((h, i) => {
-      const key = String(h ?? "").trim();
-      if (key) obj[key] = values[i] ?? "";
-    });
-
-    if (currentSection.includes("VISAO GERAL MENSAL")) {
-      data.monthlyPerformance.push(obj);
-    } else if (currentSection.includes("METODO DE PAGAMENTO (MENSAL)")) {
-      data.paymentMethodsMonthly.push(obj);
-    } else if (currentSection.includes("METODO DE PAGAMENTO")) {
-      data.paymentMethods.push(obj);
-    } else if (currentSection.includes("BANDEIRA DE CARTAO (AGREGADO)")) {
-      data.cardBrands.push(obj);
-    } else if (currentSection.includes("TIPO DE CARTAO")) {
-      data.cardTypeMonthly.push(obj);
-    } else if (
-      currentSection.includes("TOP 30 REJEICOES") ||
-      currentSection.includes("REJEICOES (YUNO)")
-    ) {
-      data.declineCodes.push(obj);
-    } else if (currentSection.includes("EVOLUCAO MENSAL")) {
-      data.declineEvolution.push(obj);
-    } else if (currentSection.includes("TOP MERCHANTS (AGREGADO)")) {
-      data.merchants.push(obj);
-    } else if (currentSection.includes("TOP 10 MERCHANTS")) {
-      data.merchantsMonthly.push(obj);
-    }
+    return data;
+  } catch (err) {
+    console.error("CSV PARSE ERROR:", err?.message, err?.stack);
+    return emptyYunoParsed();
   }
-
-  return data;
 }
 
 function normalizeJiraPriority(p) {

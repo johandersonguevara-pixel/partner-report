@@ -188,7 +188,10 @@ export default function GeneratePage({ user, onGenerated }) {
       clearInterval(interval)
 
       if (!data?.success || !data.report) {
-        throw new Error(data?.error || 'Resposta inválida do servidor (sem relatório)')
+        setError(data?.error || 'Erro ao gerar relatório')
+        setStatus('error')
+        setStep(-1)
+        return
       }
 
       const entryId = data.meta?.historyId ?? Date.now()

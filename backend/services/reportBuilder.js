@@ -250,6 +250,28 @@ function buildAutoNextStepsFromIssues(issuesData) {
   }));
 }
 
+function buildReportFallback(partnerName, period, err) {
+  return {
+    partner: partnerName || "Partner",
+    period: period || "—",
+    language: "pt-BR",
+    generatedAt: new Date().toISOString(),
+    kpis: {},
+    monthlyPerformance: [],
+    paymentMethods: [],
+    merchants: { highlights: [], alerts: [] },
+    declineCodes: [],
+    nextSteps: [],
+    executiveSummary: [],
+    trendAnalysis: "",
+    top3Opportunities: [],
+    growthOpportunities: [],
+    issuesAnalysis: null,
+    issuesData: null,
+    error: err?.message || String(err),
+  };
+}
+
 /**
  * @param {{
  *   claudeJson: object,
@@ -259,7 +281,7 @@ function buildAutoNextStepsFromIssues(issuesData) {
  *   period?: string
  * }} opts
  */
-export function buildReport({
+function buildReportCore({
   claudeJson,
   issuesData,
   yunoParsed = null,
@@ -281,6 +303,16 @@ export function buildReport({
         : {};
   }
 
+  if (!base.merchants || typeof base.merchants !== "object") {
+    base.merchants = { highlights: [], alerts: [] };
+  }
+  if (!Array.isArray(base.merchants.highlights)) {
+    base.merchants.highlights = [];
+  }
+  if (!Array.isArray(base.merchants.alerts)) {
+    base.merchants.alerts = [];
+  }
+
   base.issuesData = issuesData ?? null;
   const iaRaw = base.issuesAnalysis ?? base.issues_analysis ?? null;
   delete base.issues_analysis;
@@ -292,4 +324,19 @@ export function buildReport({
   base.nextSteps = [...auto, ...existing];
 
   return base;
+}
+
+export function buildReport(opts) {
+  try {
+    return buildReportCore(opts);
+  } catch (err) {
+    console.error("BUILD REPORT ERROR:", err?.message, err?.stack);
+    const fb = buildReportFallback(
+      opts?.partnerName,
+      opts?.period,
+      err
+    );
+    fb.issuesData = opts?.issuesData ?? null;
+    return fb;
+  }
 }

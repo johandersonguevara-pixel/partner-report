@@ -243,7 +243,11 @@ generateRouter.post("/", conditionalUpload, async (req, res, next) => {
       },
     });
   } catch (e) {
-    console.error("Generate error:", e?.stack || e);
-    next(e);
+    console.error("GENERATE ERROR:", e?.message, e?.stack);
+    return res.status(500).json({
+      success: false,
+      error: e?.message || "Internal error",
+      report: null,
+    });
   }
 });

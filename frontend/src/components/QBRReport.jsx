@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Component,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
 import {
   Chart as ChartJS,
@@ -28,6 +35,58 @@ ChartJS.register(
   Legend,
   Filler
 );
+
+class QBRReportErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error, info) {
+    console.error("QBRReport render error:", error, info?.componentStack);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div
+          style={{
+            padding: 40,
+            color: "#282A30",
+            fontFamily: "system-ui, sans-serif",
+            maxWidth: 560,
+          }}
+        >
+          <strong>Erro ao renderizar o relatório.</strong>
+          <p style={{ marginTop: 12, fontSize: 14, lineHeight: 1.5 }}>
+            Abre o consola (F12) para ver o detalhe. Podes recarregar a página ou
+            gerar o relatório outra vez.
+          </p>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            style={{
+              marginTop: 16,
+              padding: "8px 16px",
+              cursor: "pointer",
+              borderRadius: 8,
+              border: "1px solid #E8EAF5",
+              background: "#F7F8FC",
+              fontWeight: 700,
+            }}
+          >
+            Recarregar
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 const Y = {
   blue: "#3E4FE0",
@@ -206,14 +265,23 @@ function normalizeKpis(raw) {
   };
 }
 
-export default function QBRReport({ report: rawReport, meta }) {
+function QBRReportInner({ report: rawReport, meta }) {
   useEffect(() => {
+    if (rawReport == null) return;
     try {
       console.log("QBR REPORT PROP:", JSON.stringify(rawReport, null, 2));
     } catch (e) {
       console.log("QBR REPORT PROP:", rawReport, e);
     }
   }, [rawReport]);
+
+  if (rawReport == null) {
+    return (
+      <div style={{ padding: 40, color: "#282A30" }}>
+        Aguardando dados do relatório...
+      </div>
+    );
+  }
 
   const report = unwrapReportPayload(rawReport);
   const kpisRaw = report?.kpis || {};
@@ -2031,5 +2099,13 @@ export default function QBRReport({ report: rawReport, meta }) {
 
       {printPortal}
     </>
+  );
+}
+
+export default function QBRReport(props) {
+  return (
+    <QBRReportErrorBoundary>
+      <QBRReportInner {...props} />
+    </QBRReportErrorBoundary>
   );
 }
