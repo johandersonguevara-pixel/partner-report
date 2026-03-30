@@ -51,7 +51,7 @@ export default function App() {
       className="app-layout-root"
       style={{
         minHeight: '100vh',
-        background: '#F5F6FA',
+        background: '#fff9e0',
         fontFamily: "'Titillium Web', sans-serif",
       }}
     >
